@@ -229,13 +229,82 @@ async function ensureDemoTasksSeeded(userId: string) {
   }
 }
 
+// Helper to resolve relative date strings into standard dates
+function resolveRelativeDate(dateStr: string): string {
+  if (!dateStr) {
+    return new Date().toISOString();
+  }
+  
+  const now = new Date();
+  const trimmed = dateStr.trim().toLowerCase();
+  
+  if (trimmed === 'today' || trimmed === 'tonight') {
+    const today = new Date();
+    today.setHours(18, 0, 0, 0);
+    return today.toISOString();
+  }
+  
+  if (trimmed === 'tomorrow') {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(18, 0, 0, 0);
+    return tomorrow.toISOString();
+  }
+  
+  if (trimmed === 'yesterday') {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    yesterday.setHours(18, 0, 0, 0);
+    return yesterday.toISOString();
+  }
+
+  // Handle "in X days"
+  const inDaysMatch = trimmed.match(/in\s+(\d+)\s+days?/);
+  if (inDaysMatch) {
+    const days = parseInt(inDaysMatch[1], 10);
+    const target = new Date();
+    target.setDate(target.getDate() + days);
+    target.setHours(18, 0, 0, 0);
+    return target.toISOString();
+  }
+
+  // Handle "next monday", "next tuesday", etc.
+  const weekdays = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  for (let i = 0; i < weekdays.length; i++) {
+    if (trimmed.includes(weekdays[i])) {
+      const targetDay = i;
+      const currentDay = now.getDay();
+      let daysToAdd = targetDay - currentDay;
+      if (daysToAdd <= 0) {
+        daysToAdd += 7; // Next week's weekday
+      }
+      const target = new Date();
+      target.setDate(target.getDate() + daysToAdd);
+      target.setHours(18, 0, 0, 0);
+      return target.toISOString();
+    }
+  }
+
+  // If it's already a valid date/time string, we can just try parsing or return it
+  try {
+    const parsed = new Date(dateStr);
+    if (!isNaN(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+  } catch (e) {}
+
+  return dateStr;
+}
+
 async function addTaskInternal(userId: string, args: any) {
   console.log('[add_task tool] Called with args:', args);
   const { title, due_date, priority, category } = args;
   
+  const resolvedDueDate = resolveRelativeDate(due_date);
+  
   const newTask = {
     title,
-    due_date,
+    due_date: resolvedDueDate,
     priority: priority || 'medium',
     category: category || 'general',
     status: 'pending',
@@ -296,7 +365,8 @@ async function getPrioritiesInternal(userId: string, args: any) {
 
 async function suggestScheduleInternal(userId: string, accessToken: string | undefined, args: any) {
   console.log('[suggest_schedule tool] Called with args:', args);
-  const { date, available_hours } = args;
+  const { date: rawDate, available_hours } = args;
+  const date = resolveRelativeDate(rawDate).split('T')[0];
 
   // 1. Get pending tasks
   const { tasks } = await getPrioritiesInternal(userId, { limit: 10 });
@@ -537,6 +607,26 @@ app.post('/api/chat', async (req, res) => {
       });
     }
 
+    const today = new Date();
+    const formattedDate = today.toISOString().split('T')[0];
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const currentDayName = days[today.getDay()];
+    
+    const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
+    const formattedTomorrow = tomorrow.toISOString().split('T')[0];
+    
+    const dynamicSystemInstruction = `${Nudge_systemInstruction}
+
+CRITICAL TIME & DATE CONTEXT:
+- Today's date is ${formattedDate} (current day of the week is ${currentDayName}). The exact current ISO date time is ${today.toISOString()}.
+- Tomorrow's date is ${formattedTomorrow}.
+- You MUST automatically resolve all relative date/time expressions mentioned by the user (e.g. "today", "tomorrow", "tonight", "yesterday", "next Monday", "this Friday", "in 2 days", "next week", "at 6pm") relative to today's date (${formattedDate}, ${currentDayName}) when executing function calls like 'add_task' or 'suggest_schedule'.
+- NEVER ask the user to clarify or manually provide an exact YYYY-MM-DD date. You have all information needed to calculate it.
+- Examples of date calculation:
+  * If the user says "tomorrow" and today's date is ${formattedDate}, the calculated due_date for 'add_task' or 'suggest_schedule' is exactly tomorrow's calculated date: ${formattedTomorrow}.
+  * If the user says "today" or "tonight", the calculated date is ${formattedDate}.
+- Always use the calculated exact date in ISO 8601 format when invoking 'add_task' (e.g. "YYYY-MM-DDT18:00:00" or "YYYY-MM-DD") and 'suggest_schedule' (e.g. "YYYY-MM-DD").`;
+
     console.log('[API Chat] Sending contents to Gemini...');
 
     // Function Execution Loop
@@ -554,18 +644,18 @@ app.post('/api/chat', async (req, res) => {
       while (attempt < maxAttempts) {
         try {
           response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-3.5-flash',
             contents: contents,
             config: {
-              systemInstruction: Nudge_systemInstruction,
+              systemInstruction: dynamicSystemInstruction,
               tools: [{ functionDeclarations: toolsList as any }]
             }
           });
           break; // Success! Break out of the retry loop.
         } catch (error: any) {
-          const errStr = (error.message || '').toUpperCase();
-          const isUnavailable = error.status === 503 || error.status === 'UNAVAILABLE' || errStr.includes('503') || errStr.includes('UNAVAILABLE') || errStr.includes('OVERLOADED');
-          const isRateLimit = error.status === 429 || error.status === 'RESOURCE_EXHAUSTED' || errStr.includes('429') || errStr.includes('RESOURCE_EXHAUSTED') || errStr.includes('QUOTA') || errStr.includes('LIMIT');
+          const errStr = (error?.message || '').toUpperCase();
+          const isUnavailable = error?.status === 503 || error?.status === 'UNAVAILABLE' || errStr.includes('503') || errStr.includes('UNAVAILABLE') || errStr.includes('OVERLOADED');
+          const isRateLimit = error?.status === 429 || error?.status === 'RESOURCE_EXHAUSTED' || errStr.includes('429') || errStr.includes('RESOURCE_EXHAUSTED') || errStr.includes('QUOTA') || errStr.includes('LIMIT');
           
           if ((isUnavailable || isRateLimit) && attempt < maxAttempts - 1) {
             const delay = isRateLimit ? 2500 : delays[attempt];
@@ -643,63 +733,78 @@ app.post('/api/chat', async (req, res) => {
       }
     }
 
+    // Server-side robust verification & safety fallbacks
+    const failedAction = actionsTaken.find(a => a.result?.error);
+    if (failedAction) {
+      console.warn('[API Chat] Function call returned an error:', failedAction);
+      finalResponseText = `I couldn't fetch that right now - can you try rephrasing or asking again? (Error: ${failedAction.result?.error || 'Unknown query error'})`;
+    }
+
+    if (!finalResponseText || finalResponseText.trim() === '') {
+      console.warn('[API Chat] finalResponseText was empty. Applying safety fallback.');
+      
+      const lastAction = actionsTaken[actionsTaken.length - 1];
+      if (lastAction) {
+        if (lastAction.action === 'add_task') {
+          finalResponseText = `I've successfully captured and logged that deadline for you: **${lastAction.args?.title || 'New Task'}**! Let's stay laser-focused. Is there anything else you'd like to plan?`;
+        } else if (lastAction.action === 'suggest_schedule') {
+          const slots = lastAction.result?.suggested_slots || [];
+          if (slots.length > 0) {
+            let slotListText = slots.map((s: any) => `- **${s.time}**: ${s.activity}`).join('\n');
+            finalResponseText = `I have synced your calendar events and mapped out a strict, hyper-realistic hourly calendar block schedule for tomorrow:\n\n${slotListText}\n\nLet's tackle this step-by-step with zero delay!`;
+          } else {
+            finalResponseText = `I merged your calendar and tasks, but could not locate active slots or events. Let's start fresh and log some priorities!`;
+          }
+        } else {
+          finalResponseText = "I executed the request behind the scenes, but didn't generate a text response. Please let me know how you'd like to proceed!";
+        }
+      } else {
+        finalResponseText = "I'm here to nudge you to action, but I didn't generate a proper response. Can you try rephrasing or asking again?";
+      }
+    }
+
+    // Sync back to the chat history array so the frontend displays the fallback properly
+    let lastModelMsgIndex = -1;
+    for (let i = contents.length - 1; i >= 0; i--) {
+      if (contents[i].role === 'model') {
+        lastModelMsgIndex = i;
+        break;
+      }
+    }
+
+    if (lastModelMsgIndex !== -1) {
+      const partsList = contents[lastModelMsgIndex].parts || [];
+      const textPartIndex = partsList.findIndex((p: any) => p.text !== undefined && p.text !== null);
+      if (textPartIndex !== -1) {
+        partsList[textPartIndex].text = finalResponseText;
+      } else {
+        partsList.push({ text: finalResponseText });
+      }
+      contents[lastModelMsgIndex].parts = partsList;
+    } else {
+      contents.push({
+        role: 'model',
+        parts: [{ text: finalResponseText }]
+      });
+    }
+
     res.json({
       text: finalResponseText,
       actionsTaken,
       updatedHistory: contents
     });
-
   } catch (error: any) {
-    const errStr = (error.message || '').toUpperCase();
-    const isUnavailable = error.status === 503 || error.status === 'UNAVAILABLE' || errStr.includes('503') || errStr.includes('UNAVAILABLE') || errStr.includes('OVERLOADED');
-    const isQuotaExceeded = error.status === 429 || error.status === 'RESOURCE_EXHAUSTED' || errStr.includes('429') || errStr.includes('RESOURCE_EXHAUSTED') || errStr.includes('QUOTA') || errStr.includes('LIMIT');
-    
-    if (isUnavailable || isQuotaExceeded) {
-      console.log(`Demo mode: gracefully routing user response to local action engine.`);
-    } else {
-      console.log('Error routed to local handler.');
-    }
+    const errStr = (error?.message || '').toUpperCase();
+    const isUnavailable = error?.status === 503 || error?.status === 'UNAVAILABLE' || errStr.includes('503') || errStr.includes('UNAVAILABLE') || errStr.includes('OVERLOADED');
+    const isQuotaExceeded = error?.status === 429 || error?.status === 'RESOURCE_EXHAUSTED' || errStr.includes('429') || errStr.includes('RESOURCE_EXHAUSTED') || errStr.includes('QUOTA') || errStr.includes('LIMIT');
     
     if (isQuotaExceeded) {
-      const messages = req.body?.messages || [];
-      const hasModelMsg = messages.some((msg: any) => msg.role === 'model');
-      
-      let fallbackText = '';
-      if (!hasModelMsg) {
-        fallbackText = "Hey! I notice we are running in demo/offline mode right now, but I've still got your back. Let me autonomously build a rapid escape sprint schedule for your 'vibe2ship' deadline right now!\n\n" +
-          "Here is your high-fidelity action sprint schedule:\n" +
-          "- **Step 1**: Elite Core Code Architecture Refinement [15 minutes]\n" +
-          "- **Step 2**: High-Density Responsive Styling Audit [20 minutes]\n" +
-          "- **Step 3**: Satisfying Interaction & Micro-Anims Pass [15 minutes]\n" +
-          "- **Step 4**: Rapid Push & Real-World Deploy Sync [25 minutes]\n\n" +
-          "🛠️ **JUDGE QUICK-START GUIDE**\n" +
-          "- 🎙️ **Voice Command**: Tap the Microphone to speak a task out loud—it transcribes and submits automatically via the Web Speech API!\n" +
-          "- 🔊 **Text-to-Speech**: Toggle 'Voice On' to hear me audibly alert you using SpeechSynthesis.\n" +
-          "- 📊 **Triage Dashboard**: Open the top-left menu to check the dynamic 2x2 Urgency Matrix and Mini Kanban columns live inside the Analytics Hub!\n" +
-          "- 📅 **Workspace Sync**: Click 'Sync to Calendar' above to preview our animated Google Workspace integration.\n\n" +
-          "*(💡 Pro-tip: To unlock unlimited live AI responses, you can easily go to the Settings gear icon in the top-right and paste your own free Gemini API Key!)*";
-      } else {
-        fallbackText = "Hey! I notice we are running in demo/offline mode right now, but I've still got your back. Let me autonomously build a rapid escape sprint schedule for your 'vibe2ship' deadline right now!\n\n" +
-          "Here is your high-fidelity action sprint schedule:\n" +
-          "- **Step 1**: Elite Core Code Architecture Refinement [15 minutes]\n" +
-          "- **Step 2**: High-Density Responsive Styling Audit [20 minutes]\n" +
-          "- **Step 3**: Satisfying Interaction & Micro-Anims Pass [15 minutes]\n" +
-          "- **Step 4**: Rapid Push & Real-World Deploy Sync [25 minutes]\n\n" +
-          "*(💡 Pro-tip: To unlock unlimited live AI responses, you can easily go to the Settings gear icon in the top-right and paste your own free Gemini API Key!)*";
-      }
-
-      res.json({
-        text: fallbackText,
-        actionsTaken: [],
-        updatedHistory: [
-          ...messages,
-          { role: 'model', parts: [{ text: fallbackText }] }
-        ]
-      });
+      console.warn('[API Chat] Quota or rate limit exceeded on backend.');
+      res.status(429).json({ error: 'Nudge has hit its API rate limit for the moment - please wait about a minute and try again.' });
     } else if (isUnavailable) {
       res.status(503).json({ error: 'UNAVAILABLE: Gemini is currently overloaded or temporarily unavailable. Please try again.' });
     } else {
-      res.status(500).json({ error: error.message || 'Internal server error occurred' });
+      res.status(500).json({ error: error?.message || 'Internal server error occurred' });
     }
   }
 });

@@ -43,21 +43,6 @@ export const InteractiveActionTimeline: React.FC<InteractiveActionTimelineProps>
 
   // Parse tasks / micro-goals from messageText
   useEffect(() => {
-    if (messageText.includes("demo/offline mode") || messageText.includes("vibe2ship")) {
-      const demoSteps = [
-        { id: 'step_1', title: 'Elite Core Code Architecture Refinement', duration: 15, completed: false },
-        { id: 'step_2', title: 'High-Density Responsive Styling Audit', duration: 20, completed: false },
-        { id: 'step_3', title: 'Satisfying Interaction & Micro-Anims Pass', duration: 15, completed: false },
-        { id: 'step_4', title: 'Rapid Push & Real-World Deploy Sync', duration: 25, completed: false }
-      ];
-      setSteps(demoSteps);
-      setActiveStepId('step_1');
-      setTimeLeft(15 * 60);
-      setActiveBlockDuration(15);
-      setIsTimerRunning(true);
-      return;
-    }
-
     // Attempt to extract lists or bullet points
     const lines = messageText.split('\n');
     const parsedSteps: TimelineStep[] = [];

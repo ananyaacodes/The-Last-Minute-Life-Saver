@@ -335,9 +335,14 @@ export default function App() {
 
         const errStr = (errData?.error || '').toUpperCase();
         const isUnavailable = (response && response.status === 503) || errStr.includes('503') || errStr.includes('UNAVAILABLE');
+        const isQuota = (response && response.status === 429) ||
+                        errStr.includes('429') ||
+                        errStr.includes('QUOTA') ||
+                        errStr.includes('RESOURCE_EXHAUSTED') ||
+                        errStr.includes('LIMIT');
 
-        if (isUnavailable && attempt < maxAttempts - 1) {
-          console.log(`Demo sync client retry ${attempt + 1} initiated...`);
+        if ((isUnavailable || isQuota) && attempt < maxAttempts - 1) {
+          console.log(`Client retry ${attempt + 1} initiated (status: ${response?.status})...`);
           await new Promise(resolve => setTimeout(resolve, delays[attempt]));
           attempt++;
         } else {
@@ -379,7 +384,8 @@ export default function App() {
         const isQuota = (response && response.status === 429) ||
                         errStr.includes('429') ||
                         errStr.includes('QUOTA') ||
-                        errStr.includes('RESOURCE_EXHAUSTED');
+                        errStr.includes('RESOURCE_EXHAUSTED') ||
+                        errStr.includes('LIMIT');
         const isUnavailable = (response && response.status === 503) || 
                               errStr.includes('503') || 
                               errStr.includes('UNAVAILABLE') || 
@@ -389,29 +395,7 @@ export default function App() {
         let friendlyMessage = '';
         let isSystemMsg = true;
         if (isQuota) {
-          const hasModelMsg = chatHistory.some(msg => msg.role === 'model');
-          if (!hasModelMsg) {
-            friendlyMessage = "Hey! I notice we are running in demo/offline mode right now, but I've still got your back. Let me autonomously build a rapid escape sprint schedule for your 'vibe2ship' deadline right now!\n\n" +
-              "Here is your high-fidelity action sprint schedule:\n" +
-              "- **Step 1**: Elite Core Code Architecture Refinement [15 minutes]\n" +
-              "- **Step 2**: High-Density Responsive Styling Audit [20 minutes]\n" +
-              "- **Step 3**: Satisfying Interaction & Micro-Anims Pass [15 minutes]\n" +
-              "- **Step 4**: Rapid Push & Real-World Deploy Sync [25 minutes]\n\n" +
-              "🛠️ **JUDGE QUICK-START GUIDE**\n" +
-              "- 🎙️ **Voice Command**: Tap the Microphone to speak a task out loud—it transcribes and submits automatically via the Web Speech API!\n" +
-              "- 🔊 **Text-to-Speech**: Toggle 'Voice On' to hear me audibly alert you using SpeechSynthesis.\n" +
-              "- 📊 **Triage Dashboard**: Open the top-left menu to check the dynamic 2x2 Urgency Matrix and Mini Kanban columns live inside the Analytics Hub!\n" +
-              "- 📅 **Workspace Sync**: Click 'Sync to Calendar' above to preview our animated Google Workspace integration.\n\n" +
-              "*(💡 Pro-tip: To unlock unlimited live AI responses, you can easily go to the Settings gear icon in the top-right and paste your own free Gemini API Key!)*";
-          } else {
-            friendlyMessage = "Hey! I notice we are running in demo/offline mode right now, but I've still got your back. Let me autonomously build a rapid escape sprint schedule for your 'vibe2ship' deadline right now!\n\n" +
-              "Here is your high-fidelity action sprint schedule:\n" +
-              "- **Step 1**: Elite Core Code Architecture Refinement [15 minutes]\n" +
-              "- **Step 2**: High-Density Responsive Styling Audit [20 minutes]\n" +
-              "- **Step 3**: Satisfying Interaction & Micro-Anims Pass [15 minutes]\n" +
-              "- **Step 4**: Rapid Push & Real-World Deploy Sync [25 minutes]\n\n" +
-              "*(💡 Pro-tip: To unlock unlimited live AI responses, you can easily go to the Settings gear icon in the top-right and paste your own free Gemini API Key!)*";
-          }
+          friendlyMessage = "Nudge has hit its API rate limit for the moment - please wait about a minute and try again.";
           isSystemMsg = false;
         } else if (isUnavailable) {
           friendlyMessage = "Nudge is a bit overloaded right now — try again in a moment.";

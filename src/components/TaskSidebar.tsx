@@ -71,6 +71,44 @@ export const TaskSidebar: React.FC<TaskSidebarProps> = ({
     return task.status === filter;
   });
 
+  if (filter === 'all') {
+    filteredTasks.sort((a, b) => {
+      const isAComplete = a.status === 'completed';
+      const isBComplete = b.status === 'completed';
+
+      // 1. Incomplete tasks (Pending, In-Progress) should always appear above completed tasks
+      if (!isAComplete && isBComplete) return -1;
+      if (isAComplete && !isBComplete) return 1;
+
+      // Both are in the same completeness group
+      if (!isAComplete) {
+        // 2. Within the incomplete group, sort by urgency level first (Urgent > High > Medium > Low)
+        const priorityWeight: Record<Task['priority'], number> = {
+          urgent: 4,
+          high: 3,
+          medium: 2,
+          low: 1
+        };
+        const weightA = priorityWeight[a.priority] || 2;
+        const weightB = priorityWeight[b.priority] || 2;
+
+        if (weightA !== weightB) {
+          return weightB - weightA; // Higher weight (urgency) first
+        }
+
+        // Tiebreaker: sort by due date/time (soonest first)
+        const timeA = new Date(a.due_date).getTime() || 0;
+        const timeB = new Date(b.due_date).getTime() || 0;
+        return timeA - timeB;
+      } else {
+        // 3. Completed tasks should be sorted by most recently completed (updatedAt) first
+        const timeA = new Date(a.updatedAt || a.createdAt || 0).getTime();
+        const timeB = new Date(b.updatedAt || b.createdAt || 0).getTime();
+        return timeB - timeA; // Descending order (most recent first)
+      }
+    });
+  }
+
   // Calculate stats
   const pendingCount = tasks.filter(t => t.status !== 'completed').length;
   const urgentCount = tasks.filter(t => t.priority === 'urgent' && t.status !== 'completed').length;

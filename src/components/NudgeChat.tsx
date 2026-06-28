@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { ChatMessage } from '../types';
 import { InteractiveActionTimeline } from './InteractiveActionTimeline';
 import { 
@@ -168,6 +169,8 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const timerRef = useRef<any>(null);
   const recognitionRef = useRef<any>(null);
+  const recordingRecognitionRef = useRef<any>(null);
+  const recordingTranscriptRef = useRef<string>('');
 
   const [aiVoiceEnabled, setAiVoiceEnabled] = useState(() => {
     return localStorage.getItem('ai_voice_responses') === 'true';
@@ -317,6 +320,45 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
   const startVoiceRecording = async () => {
     if (isRecording) return;
     setVoiceError(null);
+
+    const SpeechRecognitionClass = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognitionClass) {
+      setVoiceError("Voice input isn't supported in this browser, please type instead.");
+      return;
+    }
+
+    // Initialize recording transcript
+    recordingTranscriptRef.current = '';
+
+    // Initialize & start Web Speech API Speech Recognition
+    const rec = new SpeechRecognitionClass();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = 'en-US';
+    
+    rec.onresult = (event: any) => {
+      let text = '';
+      for (let i = 0; i < event.results.length; ++i) {
+        text += event.results[i][0].transcript;
+      }
+      recordingTranscriptRef.current = text;
+    };
+
+    rec.onerror = (event: any) => {
+      console.warn("Speech recognition during recording warning:", event.error);
+    };
+
+    rec.onend = () => {
+      console.log("Speech recognition during recording stopped.");
+    };
+
+    recordingRecognitionRef.current = rec;
+    try {
+      rec.start();
+    } catch (e) {
+      console.error("Failed to start speech recognition:", e);
+    }
+
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error("navigator.mediaDevices not accessible");
@@ -340,8 +382,16 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
         const secs = recordingDuration % 60;
         const durationStr = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 
+        if (recordingRecognitionRef.current) {
+          try {
+            recordingRecognitionRef.current.stop();
+          } catch (e) {}
+        }
+
+        const transcribedText = recordingTranscriptRef.current.trim() || "🎙️ Voice Message";
+
         // Send Voice message to chat
-        onSendMessage("🎙️ Voice Message", audioUrl, durationStr);
+        onSendMessage(transcribedText, audioUrl, durationStr);
         
         // Cleanup streams
         stream.getTracks().forEach(track => track.stop());
@@ -373,6 +423,14 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
       timerRef.current = null;
     }
 
+    if (recordingRecognitionRef.current) {
+      try {
+        recordingRecognitionRef.current.stop();
+      } catch (e) {
+        console.error("Error stopping recording speech recognition:", e);
+      }
+    }
+
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
     } else {
@@ -380,7 +438,9 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
       const mins = Math.floor(recordingDuration / 60);
       const secs = recordingDuration % 60;
       const durationStr = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-      onSendMessage("🎙️ [Voice Message] Hey Nudge, please review my schedule and add tasks.", "demo-audio-url", durationStr);
+      
+      const transcribedText = recordingTranscriptRef.current.trim() || "Hey Nudge, please review my schedule and add tasks.";
+      onSendMessage(transcribedText, "demo-audio-url", durationStr);
       setIsRecording(false);
       setRecordingDuration(0);
     }
@@ -392,6 +452,16 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
+    }
+
+    if (recordingRecognitionRef.current) {
+      try {
+        recordingRecognitionRef.current.onresult = null;
+        recordingRecognitionRef.current.onerror = null;
+        recordingRecognitionRef.current.onend = null;
+        recordingRecognitionRef.current.stop();
+      } catch (e) {}
+      recordingRecognitionRef.current = null;
     }
 
     if (mediaRecorderRef.current) {
@@ -408,6 +478,31 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
   const simulateDemoVoiceMsg = () => {
     setIsRecording(true);
     setRecordingDuration(0);
+
+    const SpeechRecognitionClass = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognitionClass) {
+      const rec = new SpeechRecognitionClass();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = 'en-US';
+      
+      rec.onresult = (event: any) => {
+        let text = '';
+        for (let i = 0; i < event.results.length; ++i) {
+          text += event.results[i][0].transcript;
+        }
+        recordingTranscriptRef.current = text;
+      };
+
+      rec.onerror = (event: any) => {
+        console.warn("Speech recognition error in simulator:", event.error);
+      };
+
+      recordingRecognitionRef.current = rec;
+      try {
+        rec.start();
+      } catch (e) {}
+    }
     
     timerRef.current = setInterval(() => {
       setRecordingDuration(prev => prev + 1);
@@ -445,7 +540,12 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
 
   // Heuristics to detect custom JSON structures or schedule blocks inside Nudge text answers
   const renderMessageContent = (msg: ChatMessage) => {
-    const textPart = msg.parts.find(p => p.text)?.text || '';
+    let textPart = msg.parts.find(p => p.text)?.text || '';
+    
+    // Safety net fallback across all chat responses if empty
+    if (!msg.audioUrl && (!textPart || textPart.trim() === '')) {
+      textPart = "I'm here to nudge you to action, but I didn't generate a proper response. Can you try rephrasing or asking again?";
+    }
     
     // 1. Audio Voice Message bubble block
     if (msg.audioUrl) {
@@ -457,9 +557,16 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
           </div>
           <VoiceMessagePlayer audioUrl={msg.audioUrl} duration={msg.duration} />
           {textPart && textPart !== "🎙️ Voice Message" && textPart !== "🎙️ [Voice Message]" && (
-            <p className="text-xs text-indigo-200/95 leading-relaxed italic border-l-2 border-violet-500/30 pl-2 mt-1">
-              "{textPart}"
-            </p>
+            <div className="text-xs text-indigo-200/95 leading-relaxed italic border-l-2 border-violet-500/30 pl-2 mt-1">
+              <ReactMarkdown
+                components={{
+                  p: ({ node, ...props }) => <p className="mb-1 last:mb-0 inline" {...props} />,
+                  strong: ({ node, ...props }) => <strong className="font-semibold text-violet-300" {...props} />,
+                }}
+              >
+                {`"${textPart}"`}
+              </ReactMarkdown>
+            </div>
           )}
         </div>
       );
@@ -467,9 +574,20 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
 
     // 2. Schedule markdown table rendering
     if (textPart.includes('|') && textPart.toLowerCase().includes('time') && textPart.toLowerCase().includes('activity')) {
+      const parts = textPart.split('|');
+      const introText = parts[0] || '';
       return (
-        <div className="space-y-2">
-          <p className="text-sm text-indigo-100 leading-relaxed font-sans">{textPart.split('|')[0]}</p>
+        <div className="space-y-2 w-full">
+          <div className="text-sm text-indigo-100 leading-relaxed font-sans">
+            <ReactMarkdown
+              components={{
+                p: ({ node, ...props }) => <p className="mb-2 last:mb-0 whitespace-pre-wrap" {...props} />,
+                strong: ({ node, ...props }) => <strong className="font-semibold text-violet-300" {...props} />,
+              }}
+            >
+              {introText}
+            </ReactMarkdown>
+          </div>
           <div className="glass-card-lavender rounded-2xl p-4 border border-[#251e4d]/50 font-mono text-xs overflow-x-auto text-violet-200">
             {textPart}
           </div>
@@ -494,9 +612,21 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
 
     return (
       <div className="space-y-3 w-full">
-        <p className="text-sm text-indigo-100 leading-relaxed whitespace-pre-wrap font-sans">
-          {textPart}
-        </p>
+        <div className="text-sm text-indigo-100 leading-relaxed font-sans">
+          <ReactMarkdown
+            components={{
+              p: ({ node, ...props }) => <p className="mb-3 last:mb-0 whitespace-pre-wrap" {...props} />,
+              strong: ({ node, ...props }) => <strong className="font-semibold text-violet-300" {...props} />,
+              ul: ({ node, ...props }) => <ul className="list-disc pl-5 mb-3 space-y-1.5" {...props} />,
+              ol: ({ node, ...props }) => <ol className="list-decimal pl-5 mb-3 space-y-1.5" {...props} />,
+              li: ({ node, ...props }) => <li className="text-indigo-200/90" {...props} />,
+              em: ({ node, ...props }) => <em className="italic text-indigo-300/80" {...props} />,
+              code: ({ node, ...props }) => <code className="bg-violet-950/50 text-violet-200 px-1.5 py-0.5 rounded font-mono text-xs border border-violet-800/20" {...props} />,
+            }}
+          >
+            {textPart}
+          </ReactMarkdown>
+        </div>
         {hasStudyPlan && (
           <InteractiveActionTimeline messageText={textPart} />
         )}
