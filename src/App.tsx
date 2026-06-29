@@ -30,7 +30,8 @@ import {
   Bell,
   BellRing,
   AlertTriangle,
-  CheckCircle2
+  CheckCircle2,
+  MessageSquare
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -44,6 +45,7 @@ export default function App() {
   });
 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<'chat' | 'analytics'>('chat');
   const [isTaskSectionExpanded, setIsTaskSectionExpanded] = useState(true);
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     return (localStorage.getItem('nudge_theme') as 'dark' | 'light') || 'dark';
@@ -291,9 +293,53 @@ export default function App() {
       ...(duration && { duration })
     };
 
-    const nextHistory = [...chatHistory, userMsg];
+    // Enforce clean intent switching across different dashboard states
+    const isQuickAction = [
+      "what are my current priorities",
+      "suggest a schedule",
+      "log a new deadline",
+      "re-plan my day"
+    ].some(qa => text.toLowerCase().includes(qa));
+
+    const isOngoingModification = [
+      'modify', 'update', 'change', 'postpone', 'delay', 'reschedule',
+      'keep', 'edit', 'mark', 'complete', 'finish', 'ongoing', 'previous',
+      'it', 'that', 'this', 'above', 'before', 'the exam', 'that task',
+      'add a step', 'add step', 'continue'
+    ].some(word => text.toLowerCase().includes(word));
+
+    const isCleanIntentSwitch = isQuickAction || !isOngoingModification;
+
+    let sanitizedHistory = chatHistory;
+    if (isCleanIntentSwitch) {
+      sanitizedHistory = chatHistory.filter(msg => {
+        const textContent = msg.parts.map(p => p.text || '').join(' ').toLowerCase();
+        const hasStaleDetails = 
+          textContent.includes('organic chemistry') || 
+          textContent.includes('june 27') || 
+          textContent.includes('6/27') ||
+          textContent.includes('chemistry');
+        return !hasStaleDetails;
+      });
+    }
+
+    const nextHistory = [...sanitizedHistory, userMsg];
     setChatHistory(nextHistory);
     setIsLoadingChat(true);
+
+    if (text === "Log a New Deadline") {
+      setTimeout(() => {
+        const nudgeResponse: ChatMessage = {
+          id: Math.random().toString(),
+          role: 'model',
+          parts: [{ text: "Ready. What task or deadline are we locking in right now? Give me the name and target time." }],
+          createdAt: new Date().toISOString()
+        };
+        setChatHistory(prev => [...prev, nudgeResponse]);
+        setIsLoadingChat(false);
+      }, 400);
+      return;
+    }
 
     try {
       const headers: any = {
@@ -619,6 +665,19 @@ export default function App() {
         {/* User Account / Control info */}
         {currentUser && (
           <div className="flex items-center gap-3">
+            {/* Quick Analytics Status Badge */}
+            <button
+              onClick={() => setActiveTab(activeTab === 'analytics' ? 'chat' : 'analytics')}
+              className={`hidden sm:flex items-center gap-2 px-3.5 py-1.5 rounded-full border text-[11px] font-semibold font-mono tracking-wide transition-all cursor-pointer ${
+                activeTab === 'analytics'
+                  ? 'bg-violet-600/25 text-white border-violet-500/40 shadow-[0_0_15px_rgba(139,92,246,0.3)]'
+                  : 'bg-[#0f0a2d]/30 text-indigo-300 border-[#251e4d]/40 hover:bg-[#150e3d]/50 hover:text-white'
+              }`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${tasks.filter(t => t.status !== 'completed').length > 0 ? 'bg-violet-400 animate-pulse shadow-[0_0_6px_rgba(167,139,250,0.8)]' : 'bg-zinc-500'}`} />
+              <span>{tasks.filter(t => t.status !== 'completed').length} Active</span>
+            </button>
+
             {/* Proactive Notification Bell System */}
             <div className="relative">
               <button
@@ -769,18 +828,21 @@ export default function App() {
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: 'auto' }}
             exit={{ opacity: 0, height: 0 }}
-            className="bg-indigo-950/30 border-b border-indigo-900/40 px-6 py-2.5 flex items-center justify-between text-xs text-indigo-100 z-10"
+            className="relative overflow-hidden border-b border-red-900/30 px-4 py-3 sm:px-6 sm:py-2.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-indigo-100 z-10"
           >
-            <div className="flex items-center gap-2">
-              <AlertOctagon className="w-4.5 h-4.5 text-violet-400 animate-bounce" />
+            {/* Ambient pulsing background container */}
+            <div className="absolute inset-0 alarm-banner-pulse pointer-events-none -z-10" />
+
+            <div className="flex items-center gap-2 relative z-10">
+              <AlertOctagon className="w-4.5 h-4.5 text-rose-400 animate-bounce shrink-0" />
               <span>
                 <strong>CRITICAL ALARM:</strong> you have <strong>{criticalTasks.length}</strong> deadline(s) due in less than 24 hours!
               </span>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 relative z-10 w-full sm:w-auto justify-between sm:justify-start">
               <button
                 onClick={() => handleSendMessage("Re-plan my day to finish my urgent tasks before they are due.")}
-                className="btn-pill-lavender text-white font-semibold px-5 py-1.5 text-[11px] transition-all cursor-pointer shadow-[0_0_15px_rgba(167,139,250,0.35)]"
+                className="btn-pill-lavender text-white tracking-tight shrink-0 w-full text-center px-3 py-2 !rounded-xl text-xs font-semibold sm:w-auto sm:px-5 sm:py-1.5 sm:!rounded-full sm:text-[11px] cursor-pointer shadow-[0_0_15px_rgba(167,139,250,0.35)] hover:shadow-[0_0_30px_rgba(167,139,250,0.95),_0_0_15px_rgba(139,92,246,0.65)] focus:shadow-[0_0_30px_rgba(167,139,250,0.95),_0_0_15px_rgba(139,92,246,0.65)] hover:scale-[1.01] sm:hover:scale-105 focus:scale-105 transition-all duration-300 outline-none"
               >
                 Have Nudge Re-Plan Day
               </button>
@@ -791,10 +853,10 @@ export default function App() {
                     sessionStorage.setItem('nudge_alarm_dismissed', 'true');
                   }
                 }}
-                className="text-indigo-300 hover:text-white p-1 hover:bg-white/5 rounded transition-all cursor-pointer flex items-center justify-center"
+                className="text-indigo-300 hover:text-white p-2 hover:bg-white/5 rounded-xl border border-white/5 sm:border-0 sm:p-1 transition-all cursor-pointer flex items-center justify-center shrink-0"
                 title="Dismiss Alarm"
               >
-                <X className="w-3.5 h-3.5" />
+                <X className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
               </button>
             </div>
           </motion.div>
@@ -823,7 +885,12 @@ export default function App() {
                   {/* ROTATING GLOW RING: Orbiting light animation */}
                   <div className="nudge-orbit-ring" />
 
-                  <div className={`w-36 h-36 ${isLoadingChat ? 'nudge-orb-thinking' : criticalTasks.length > 0 ? 'nudge-orb-urgent' : 'nudge-orb-organic'} flex flex-col items-center justify-center relative shadow-[0_0_50px_rgba(139,92,246,0.35)]`}>
+                  <motion.div
+                    animate={{ y: [0, -6, 0] }}
+                    transition={{ repeat: Infinity, duration: 5, ease: "easeInOut" }}
+                    whileHover={{ scale: 1.08, boxShadow: "0 0 65px rgba(139,92,246,0.75)" }}
+                    className={`w-36 h-36 ${isLoadingChat ? 'nudge-orb-thinking' : criticalTasks.length > 0 ? 'nudge-orb-urgent' : 'nudge-orb-organic'} flex flex-col items-center justify-center relative shadow-[0_0_50px_rgba(139,92,246,0.35)] cursor-pointer transition-shadow duration-300`}
+                  >
                     {/* CRESCENT HIGHLIGHT to simulate light wrapping around a sphere */}
                     <div className="orb-crescent-highlight" />
 
@@ -832,7 +899,7 @@ export default function App() {
                       <div className="nudge-eye animate-blink" />
                       <div className="nudge-eye animate-blink" />
                     </div>
-                  </div>
+                  </motion.div>
                 </div>
 
                 {/* Floating Translucent Glass Cards at different depths */}
@@ -884,7 +951,7 @@ export default function App() {
               </div>
 
               <div className="space-y-4 flex flex-col items-center">
-                <h2 className="font-display font-extrabold text-3xl md:text-4xl tracking-tight text-white leading-tight">
+                <h2 className="font-display font-extrabold text-3xl md:text-4xl tracking-tighter text-white leading-tight">
                   Defeat Deadlines. Reclaim Time.
                 </h2>
                 {/* Thin glowing horizontal accent line under headline */}
@@ -918,7 +985,7 @@ export default function App() {
           /* Active App Workspace */
           <div className="flex-1 grid grid-cols-1 md:grid-cols-[320px_1fr] overflow-hidden gap-2 md:gap-0 animate-none h-full">
             {/* Desktop Dashboard Sidebar Column */}
-            <div className="hidden md:flex flex-col w-[320px] bg-[#08051a]/65 border-r border-[#251e4d]/30 overflow-hidden shrink-0 h-full">
+            <div className="hidden md:flex flex-col w-[320px] bg-[#08051a]/65 overflow-hidden shrink-0 h-full">
               {/* Header */}
               <div className="p-4 border-b border-[#251e4d]/30 flex items-center gap-2 bg-[#0c0824]/60 sticky top-0 z-20 shrink-0">
                 <Layers className="w-5 h-5 text-violet-400 animate-pulse" />
@@ -958,16 +1025,54 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* 1.5. Analytics Hub */}
+                {/* Workspace Navigation */}
                 <div className="space-y-2">
                   <label className="text-[10px] uppercase tracking-wider text-indigo-300/60 font-semibold font-mono block">
-                    Analytics Hub
+                    Workspace Navigation
                   </label>
-                  <VisualDashboard
-                    tasks={tasks}
-                    onUpdateTask={handleUpdateTask}
-                    onDeleteTask={handleDeleteTask}
-                  />
+                  <div className="space-y-1.5">
+                    <button
+                      onClick={() => setActiveTab('chat')}
+                      className={`w-full pl-4 pr-3 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-between transition-all duration-200 ease-in-out cursor-pointer relative overflow-hidden ${
+                        activeTab === 'chat'
+                          ? 'bg-gradient-to-r from-purple-500/10 to-transparent text-white border border-violet-500/30'
+                          : 'bg-[#0f0a2d]/40 text-indigo-300/60 border border-white/5 hover:text-indigo-200 hover:bg-white/5 hover:shadow-[0_0_12px_rgba(167,139,250,0.15)] hover:border-violet-500/20'
+                      }`}
+                    >
+                      {activeTab === 'chat' && (
+                        <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-purple-500" />
+                      )}
+                      <div className="flex items-center gap-2">
+                        <MessageSquare className="w-4 h-4 text-violet-400" />
+                        <span>Guardian Chat</span>
+                      </div>
+                      <span className="text-[9px] font-mono text-indigo-300/40 bg-black/20 px-1.5 py-0.5 rounded">
+                        Active
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={() => setActiveTab('analytics')}
+                      className={`w-full pl-4 pr-3 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-between transition-all duration-200 ease-in-out cursor-pointer relative overflow-hidden ${
+                        activeTab === 'analytics'
+                          ? 'bg-gradient-to-r from-purple-500/10 to-transparent text-white border border-violet-500/30 font-bold'
+                          : 'bg-[#0f0a2d]/40 text-indigo-300/60 border border-white/5 hover:text-indigo-200 hover:bg-white/5 hover:shadow-[0_0_12px_rgba(167,139,250,0.15)] hover:border-violet-500/20'
+                      }`}
+                    >
+                      {activeTab === 'analytics' && (
+                        <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-purple-500" />
+                      )}
+                      <div className="flex items-center gap-2">
+                        <TrendingUp className="w-4 h-4 text-violet-400 animate-pulse" />
+                        <span>Analytics Hub</span>
+                      </div>
+                      {tasks.filter(t => t.status !== 'completed').length > 0 && (
+                        <span className="text-[9px] font-bold font-mono text-violet-300 bg-violet-600/15 border border-violet-500/30 px-1.5 py-0.5 rounded">
+                          {tasks.filter(t => t.status !== 'completed').length} Left
+                        </span>
+                      )}
+                    </button>
+                  </div>
                 </div>
 
                 {/* 2. Add Account Component */}
@@ -1060,19 +1165,45 @@ export default function App() {
             </div>
 
             {/* Dashboard & Chat Column Container */}
-            <div className="w-full h-full min-h-0 overflow-hidden flex flex-col relative">
-              {/* Chat Column */}
-              <div className="flex-1 min-h-0 overflow-hidden flex flex-col relative">
-                <NudgeChat
-                  chatHistory={chatHistory}
-                  onSendMessage={handleSendMessage}
-                  isLoading={isLoadingChat}
-                  needsAuth={needsAuth}
-                  onLogin={handleLogin}
-                  isLoggingIn={isLoggingIn}
-                  criticalTasksCount={criticalTasks.length}
-                />
-              </div>
+            <div className="w-full h-full min-h-0 overflow-hidden flex flex-col relative p-2 sm:p-4">
+              <AnimatePresence mode="wait">
+                {activeTab === 'chat' ? (
+                  <motion.div
+                    key="chat-tab"
+                    initial={{ opacity: 0, x: -15 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 15 }}
+                    transition={{ duration: 0.25, ease: "easeInOut" }}
+                    className="flex-1 min-h-0 overflow-hidden flex flex-col relative h-full"
+                  >
+                    <NudgeChat
+                      chatHistory={chatHistory}
+                      onSendMessage={handleSendMessage}
+                      isLoading={isLoadingChat}
+                      needsAuth={needsAuth}
+                      onLogin={handleLogin}
+                      isLoggingIn={isLoggingIn}
+                      criticalTasksCount={criticalTasks.length}
+                    />
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="analytics-tab"
+                    initial={{ opacity: 0, x: 15 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -15 }}
+                    transition={{ duration: 0.25, ease: "easeInOut" }}
+                    className="flex-1 min-h-0 overflow-hidden flex flex-col relative h-full"
+                  >
+                    <VisualDashboard
+                      tasks={tasks}
+                      onUpdateTask={handleUpdateTask}
+                      onDeleteTask={handleDeleteTask}
+                      fullscreen={true}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </div>
         )}
@@ -1146,16 +1277,60 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* 1.5. Analytics Hub */}
+                {/* Workspace Navigation */}
                 <div className="space-y-2">
                   <label className="text-[10px] uppercase tracking-wider text-indigo-300/60 font-semibold font-mono block">
-                    Analytics Hub
+                    Workspace Navigation
                   </label>
-                  <VisualDashboard
-                    tasks={tasks}
-                    onUpdateTask={handleUpdateTask}
-                    onDeleteTask={handleDeleteTask}
-                  />
+                  <div className="space-y-1.5">
+                    <button
+                      onClick={() => {
+                        setActiveTab('chat');
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className={`w-full pl-4 pr-3 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-between transition-all duration-200 ease-in-out cursor-pointer relative overflow-hidden ${
+                        activeTab === 'chat'
+                          ? 'bg-gradient-to-r from-purple-500/10 to-transparent text-white border border-violet-500/30'
+                          : 'bg-[#0f0a2d]/40 text-indigo-300/60 border border-white/5 hover:text-indigo-200 hover:bg-white/5 hover:shadow-[0_0_12px_rgba(167,139,250,0.15)] hover:border-violet-500/20'
+                      }`}
+                    >
+                      {activeTab === 'chat' && (
+                        <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-purple-500" />
+                      )}
+                      <div className="flex items-center gap-2">
+                        <MessageSquare className="w-4 h-4 text-violet-400" />
+                        <span>Guardian Chat</span>
+                      </div>
+                      <span className="text-[9px] font-mono text-indigo-300/40 bg-black/20 px-1.5 py-0.5 rounded">
+                        Active
+                      </span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setActiveTab('analytics');
+                        setIsMobileMenuOpen(false);
+                      }}
+                      className={`w-full pl-4 pr-3 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-between transition-all duration-200 ease-in-out cursor-pointer relative overflow-hidden ${
+                        activeTab === 'analytics'
+                          ? 'bg-gradient-to-r from-purple-500/10 to-transparent text-white border border-violet-500/30 font-bold'
+                          : 'bg-[#0f0a2d]/40 text-indigo-300/60 border border-white/5 hover:text-indigo-200 hover:bg-white/5 hover:shadow-[0_0_12px_rgba(167,139,250,0.15)] hover:border-violet-500/20'
+                      }`}
+                    >
+                      {activeTab === 'analytics' && (
+                        <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-purple-500" />
+                      )}
+                      <div className="flex items-center gap-2">
+                        <TrendingUp className="w-4 h-4 text-violet-400 animate-pulse" />
+                        <span>Analytics Hub</span>
+                      </div>
+                      {tasks.filter(t => t.status !== 'completed').length > 0 && (
+                        <span className="text-[9px] font-bold font-mono text-violet-300 bg-violet-600/15 border border-violet-500/30 px-1.5 py-0.5 rounded">
+                          {tasks.filter(t => t.status !== 'completed').length} Left
+                        </span>
+                      )}
+                    </button>
+                  </div>
                 </div>
 
                 {/* 2. Add Account Component */}

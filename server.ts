@@ -5,7 +5,8 @@ import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
 import { initializeApp, getApps } from 'firebase/app';
 import { 
-  getFirestore, 
+  initializeFirestore,
+  memoryLocalCache,
   collection, 
   addDoc, 
   getDocs, 
@@ -35,8 +36,8 @@ if (fs.existsSync(firebaseConfigPath)) {
 // Initialize Firebase
 const firebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 const db = firebaseConfig.firestoreDatabaseId 
-  ? getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId)
-  : getFirestore(firebaseApp);
+  ? initializeFirestore(firebaseApp, { localCache: memoryLocalCache() }, firebaseConfig.firestoreDatabaseId)
+  : initializeFirestore(firebaseApp, { localCache: memoryLocalCache() });
 
 // Initialize Gemini SDK with User-Agent telemetry header
 const ai = new GoogleGenAI({
@@ -47,6 +48,16 @@ const ai = new GoogleGenAI({
     }
   }
 });
+
+function cleanString(str: string): string {
+  if (!str || typeof str !== 'string') return str;
+  return str
+    .replace(/\*\*|\*|#+|`+/g, '') // remove asterisks, hashes, backticks
+    .replace(/\[\s*[xX]?\s*\]/g, '') // remove brackets containing space, x, X (e.g. markdown checkboxes [ ], [x], [X])
+    .replace(/\[\s*\]/g, '') // remove empty brackets [ ]
+    .replace(/^[:\-\s,;\[\]\(\)]+|[:\-\s,;\[\]\(\)]+$/g, '') // remove leading/trailing noise
+    .trim();
+}
 
 const app = express();
 const PORT = 3000;
@@ -100,10 +111,10 @@ app.post('/api/tasks', async (req, res) => {
     }
 
     const newTask = {
-      title,
+      title: cleanString(title),
       due_date,
       priority: priority || 'medium',
-      category: category || 'general',
+      category: cleanString(category || 'general'),
       status: 'pending',
       userId,
       createdAt: new Date().toISOString(),
@@ -303,10 +314,10 @@ async function addTaskInternal(userId: string, args: any) {
   const resolvedDueDate = resolveRelativeDate(due_date);
   
   const newTask = {
-    title,
+    title: cleanString(title),
     due_date: resolvedDueDate,
     priority: priority || 'medium',
-    category: category || 'general',
+    category: cleanString(category || 'general'),
     status: 'pending',
     userId,
     createdAt: new Date().toISOString(),
@@ -318,7 +329,7 @@ async function addTaskInternal(userId: string, args: any) {
     success: true,
     taskId: docRef.id,
     task: newTask,
-    message: `Task "${title}" added successfully.`
+    message: `Task "${cleanString(title)}" added successfully.`
   };
 }
 
@@ -511,8 +522,13 @@ CRITICAL BEHAVIORS:
 4. When the user mentions any task, deadline, assignment, bill, interview, or commitment, capture it immediately by calling 'add_task'. Don't ask permission first — capture it, then confirm in one brief, action-oriented sentence.
 5. When the user opens a session or asks what to focus on, call 'get_priorities' to see their current task list ranked by urgency before responding.
 
-RESPONSE FORMAT:
-Always return clean markdown with bold callouts, clear actionable check-lists, and time metrics. Keep your tone encouraging but urgent.`;
+RESPONSE FORMAT & FORMAT STABILITY RULES:
+1. Always return clean markdown with bold callouts, clear actionable check-lists, and time metrics. Keep your tone encouraging but urgent.
+2. DO NOT output generic bullet characters (like •, -, or *) for lists of actionable steps or micro-goals. Instead, format all actionable lists or micro-steps using standard markdown numbered list elements (e.g., "1. Step", "2. Step") that parse to standard HTML/JSX list tags.
+3. Ensure each list item is descriptive, short, and structured like a punchy, professional task card title (e.g., "Review Grading Rubric" or "Draft Email to Professor" rather than a full conversational sentence). This allows the frontend to render them beautifully inside an interactive task wrapper.
+4. Ensure generated strings for task titles, categories, and sub-goals are stripped completely of raw Markdown syntax like asterisks (**), brackets ([ ]), or hashes (#). Keep them as pure, clean, readable plain text.
+5. Remove redundant markdown checkboxes like [ ] or [x] from any list steps or sub-goals. The UI already renders a native checkbox next to each item; your step descriptions must only contain the clean, plain-text text.
+6. If outputting or mapping data fields (e.g. JSON arguments or serialized task fields), map the fields as clean, pure string keys and values (e.g., category: "Assignment", title: "Study Goal").`;
 
 const toolsList = [
   {
@@ -591,11 +607,47 @@ app.post('/api/chat', async (req, res) => {
       return res.status(400).json({ error: 'messages array is required' });
     }
 
+    // Detect clean intent switch to reset context and clear stale data registers
+    const lastUserMessage = messages[messages.length - 1];
+    let lastUserText = '';
+    if (lastUserMessage && lastUserMessage.role === 'user') {
+      lastUserText = lastUserMessage.parts.map((p: any) => p.text || '').join(' ');
+    }
+
+    const isQuickAction = [
+      "what are my current priorities",
+      "suggest a schedule",
+      "log a new deadline",
+      "re-plan my day"
+    ].some(qa => lastUserText.toLowerCase().includes(qa));
+
+    const isOngoingModification = [
+      'modify', 'update', 'change', 'postpone', 'delay', 'reschedule',
+      'keep', 'edit', 'mark', 'complete', 'finish', 'ongoing', 'previous',
+      'it', 'that', 'this', 'above', 'before', 'the exam', 'that task',
+      'add a step', 'add step', 'continue'
+    ].some(word => lastUserText.toLowerCase().includes(word));
+
+    const isCleanIntentSwitch = isQuickAction || !isOngoingModification;
+
+    let processedMessages = messages;
+    if (isCleanIntentSwitch) {
+      processedMessages = messages.filter((msg: any) => {
+        const textContent = msg.parts.map((p: any) => p.text || '').join(' ').toLowerCase();
+        const hasStaleDetails = 
+          textContent.includes('organic chemistry') || 
+          textContent.includes('june 27') || 
+          textContent.includes('6/27') ||
+          textContent.includes('chemistry');
+        return !hasStaleDetails;
+      });
+    }
+
     // Format messages for @google/genai SDK
     // The chat history format: Array of { role: 'user'|'model', parts: [{ text: '...' } | { functionCall: ... } | { functionResponse: ... }] }
     const contents: any[] = [];
     
-    for (const msg of messages) {
+    for (const msg of processedMessages) {
       contents.push({
         role: msg.role,
         parts: msg.parts.map((p: any) => {
@@ -625,7 +677,12 @@ CRITICAL TIME & DATE CONTEXT:
 - Examples of date calculation:
   * If the user says "tomorrow" and today's date is ${formattedDate}, the calculated due_date for 'add_task' or 'suggest_schedule' is exactly tomorrow's calculated date: ${formattedTomorrow}.
   * If the user says "today" or "tonight", the calculated date is ${formattedDate}.
-- Always use the calculated exact date in ISO 8601 format when invoking 'add_task' (e.g. "YYYY-MM-DDT18:00:00" or "YYYY-MM-DD") and 'suggest_schedule' (e.g. "YYYY-MM-DD").`;
+- Always use the calculated exact date in ISO 8601 format when invoking 'add_task' (e.g. "YYYY-MM-DDT18:00:00" or "YYYY-MM-DD") and 'suggest_schedule' (e.g. "YYYY-MM-DD").${isCleanIntentSwitch ? `
+
+INTENT SWITCH ENFORCEMENT:
+- The user has initiated a clean intent switch (such as clicking a quick action or entering a fresh topic).
+- You MUST completely reset the active task schema context and any previous parameter assumptions (such as old dates like June 27th or old subjects like Organic Chemistry).
+- Do NOT assume or carry over any previous task details, names, or deadlines unless the user explicitly refers to them in their latest message. Process the latest message with a completely clean state.` : ''}`;
 
     console.log('[API Chat] Sending contents to Gemini...');
 

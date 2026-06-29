@@ -26,12 +26,14 @@ interface VisualDashboardProps {
   tasks: Task[];
   onUpdateTask: (id: string, updates: Partial<Task>) => Promise<void>;
   onDeleteTask: (id: string) => Promise<void>;
+  fullscreen?: boolean;
 }
 
 export const VisualDashboard: React.FC<VisualDashboardProps> = ({
   tasks,
   onUpdateTask,
-  onDeleteTask
+  onDeleteTask,
+  fullscreen = false
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(true);
   const [isSyncing, setIsSyncing] = useState<string | null>(null);
@@ -136,6 +138,336 @@ export const VisualDashboard: React.FC<VisualDashboardProps> = ({
         return 'bg-zinc-500/15 text-zinc-300 border border-zinc-700/35';
     }
   };
+
+  if (fullscreen) {
+    return (
+      <div className="w-full flex-1 flex flex-col space-y-6 overflow-y-auto p-4 sm:p-6 md:p-8 bg-neutral-950/40 backdrop-blur-md rounded-[24px] border border-white/5 shadow-2xl relative z-10 scrollbar-thin">
+        {/* Decorative background glow inside dashboard */}
+        <div className="absolute top-0 right-1/4 w-96 h-96 rounded-full bg-violet-600/10 blur-3xl pointer-events-none"></div>
+        <div className="absolute bottom-0 left-1/4 w-96 h-96 rounded-full bg-indigo-600/5 blur-3xl pointer-events-none"></div>
+
+        {/* Header Title Section */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/5 pb-5 shrink-0">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <div className="relative w-8 h-8 rounded-lg bg-violet-600/10 border border-violet-500/20 flex items-center justify-center text-violet-400 shrink-0">
+                <TrendingUp className="w-4 h-4 animate-pulse" />
+              </div>
+              <h2 className="font-display font-extrabold text-lg sm:text-xl text-white tracking-wide">
+                Strategic Analytics Hub
+              </h2>
+            </div>
+            <p className="text-xs text-indigo-300/60 font-medium">
+              A comprehensive bento grid showing your Eisenhower Urgency Matrix and Kanban workflow.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-semibold font-mono text-zinc-400 bg-neutral-900 px-3.5 py-1.5 rounded-xl border border-white/5">
+              Completion Velocity: <strong className="text-emerald-400 font-bold">{completionPercentage}%</strong>
+            </span>
+          </div>
+        </div>
+
+        {/* 1. Bento Grid Quick Statistics Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 shrink-0">
+          {/* Card 1: Progress Rate */}
+          <div className="bg-[#0f0a2d]/60 border border-[#251e4d]/40 rounded-2xl p-4 flex flex-col justify-between space-y-4 shadow-md relative overflow-hidden group hover:border-violet-500/30 transition-all duration-300">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-indigo-300/60 font-semibold font-mono uppercase tracking-wider">Completion Rate</span>
+              <Sparkles className="w-4 h-4 text-violet-400 animate-pulse" />
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex items-baseline gap-1">
+                <span className="text-3xl font-display font-black text-white">{completedCount}</span>
+                <span className="text-xs text-indigo-300/40">/ {totalCount} finished</span>
+              </div>
+              <div className="w-full h-1.5 bg-black/40 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-violet-500 via-indigo-400 to-emerald-400 transition-all duration-700"
+                  style={{ width: `${completionPercentage}%` }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Card 2: Critical / Urgent Focus */}
+          <div className="bg-[#0f0a2d]/60 border border-[#251e4d]/40 rounded-2xl p-4 flex flex-col justify-between space-y-4 shadow-md relative overflow-hidden group hover:border-rose-500/30 transition-all duration-300">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-rose-300/60 font-semibold font-mono uppercase tracking-wider">Critical Focus</span>
+              <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping shadow-[0_0_8px_rgba(239,68,68,0.8)]"></span>
+            </div>
+            <div>
+              <div className="text-3xl font-display font-black text-white">{criticalCount}</div>
+              <div className="text-xs text-rose-300/50 mt-1 font-semibold uppercase tracking-wider">High Priority Tasks</div>
+            </div>
+          </div>
+
+          {/* Card 3: In-Progress Status */}
+          <div className="bg-[#0f0a2d]/60 border border-[#251e4d]/40 rounded-2xl p-4 flex flex-col justify-between space-y-4 shadow-md relative overflow-hidden group hover:border-indigo-500/30 transition-all duration-300">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-indigo-300/60 font-semibold font-mono uppercase tracking-wider">In Active Sprint</span>
+              <Activity className="w-4 h-4 text-indigo-400" />
+            </div>
+            <div>
+              <div className="text-3xl font-display font-black text-white">{activeCount}</div>
+              <div className="text-xs text-indigo-300/50 mt-1 font-semibold uppercase tracking-wider">Sprinting Tasks</div>
+            </div>
+          </div>
+
+          {/* Card 4: Backburner / Chill */}
+          <div className="bg-[#0f0a2d]/60 border border-[#251e4d]/40 rounded-2xl p-4 flex flex-col justify-between space-y-4 shadow-md relative overflow-hidden group hover:border-emerald-500/30 transition-all duration-300">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-emerald-300/60 font-semibold font-mono uppercase tracking-wider">Backlog / Chill</span>
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            </div>
+            <div>
+              <div className="text-3xl font-display font-black text-white">{q4_chill.length}</div>
+              <div className="text-xs text-emerald-300/50 mt-1 font-semibold uppercase tracking-wider">Chill Tasks Scheduled</div>
+            </div>
+          </div>
+        </div>
+
+        {/* 2. Eisenhower 2x2 Matrix Block - Rendered as large grid cards */}
+        <div className="space-y-3 pt-2">
+          <div className="flex items-center gap-1.5 border-b border-white/5 pb-1">
+            <Grid className="w-4 h-4 text-violet-400" />
+            <h3 className="font-display font-extrabold text-sm text-white uppercase tracking-wider">Strategic Priority Matrix (Eisenhower 2x2)</h3>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Q1: Critical & Urgent */}
+            <div className="border border-rose-500/20 bg-rose-950/5 hover:border-rose-500/35 rounded-2xl p-4 flex flex-col relative overflow-hidden transition-all duration-300 shadow-lg min-h-[180px]">
+              <div className="flex items-center justify-between border-b border-rose-500/10 pb-2 mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 bg-rose-500 rounded-full animate-ping"></span>
+                  <span className="font-display font-extrabold text-xs text-rose-300 uppercase tracking-wider">Q1: Urgent & Critical</span>
+                </div>
+                <span className="text-[10px] bg-rose-500/15 text-rose-300 border border-rose-500/30 px-2 py-0.5 rounded font-bold font-mono">
+                  {q1_criticalUrgent.length} tasks
+                </span>
+              </div>
+              
+              <div className="space-y-2 flex-1 overflow-y-auto pr-1 max-h-[160px] custom-scroll">
+                {q1_criticalUrgent.length === 0 ? (
+                  <div className="h-full py-6 flex flex-col items-center justify-center text-center text-rose-300/20">
+                    <ShieldCheck className="w-6 h-6 mb-1 text-rose-400/15" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider">Quadrant Cleared</span>
+                  </div>
+                ) : (
+                  q1_criticalUrgent.map(task => (
+                    <MatrixCard 
+                      key={task.id} 
+                      task={task} 
+                      isSyncing={isSyncing === task.id}
+                      onProgress={() => handleProgressStatus(task)} 
+                      onDelete={onDeleteTask}
+                      getTimeRemainingStr={getTimeRemainingStr}
+                      getPriorityBadgeStyles={getPriorityBadgeStyles}
+                    />
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Q2: High Priority / Not Urgent */}
+            <div className="border border-amber-500/20 bg-amber-950/5 hover:border-amber-500/35 rounded-2xl p-4 flex flex-col relative overflow-hidden transition-all duration-300 shadow-lg min-h-[180px]">
+              <div className="flex items-center justify-between border-b border-amber-500/10 pb-2 mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 bg-amber-500 rounded-full"></span>
+                  <span className="font-display font-extrabold text-xs text-amber-300 uppercase tracking-wider">Q2: High Priority (Schedule)</span>
+                </div>
+                <span className="text-[10px] bg-amber-500/15 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-bold font-mono">
+                  {q2_criticalNotUrgent.length} tasks
+                </span>
+              </div>
+              
+              <div className="space-y-2 flex-1 overflow-y-auto pr-1 max-h-[160px] custom-scroll">
+                {q2_criticalNotUrgent.length === 0 ? (
+                  <div className="h-full py-6 flex flex-col items-center justify-center text-center text-amber-300/20">
+                    <ShieldCheck className="w-6 h-6 mb-1 text-amber-400/15" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider">Quadrant Cleared</span>
+                  </div>
+                ) : (
+                  q2_criticalNotUrgent.map(task => (
+                    <MatrixCard 
+                      key={task.id} 
+                      task={task} 
+                      isSyncing={isSyncing === task.id}
+                      onProgress={() => handleProgressStatus(task)} 
+                      onDelete={onDeleteTask}
+                      getTimeRemainingStr={getTimeRemainingStr}
+                      getPriorityBadgeStyles={getPriorityBadgeStyles}
+                    />
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Q3: Urgent / Low Priority */}
+            <div className="border border-violet-500/20 bg-violet-950/5 hover:border-violet-500/35 rounded-2xl p-4 flex flex-col relative overflow-hidden transition-all duration-300 shadow-lg min-h-[180px]">
+              <div className="flex items-center justify-between border-b border-violet-500/10 pb-2 mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 bg-violet-500 rounded-full"></span>
+                  <span className="font-display font-extrabold text-xs text-violet-300 uppercase tracking-wider">Q3: Sprint / Delegate</span>
+                </div>
+                <span className="text-[10px] bg-violet-500/15 text-violet-300 border border-violet-500/30 px-2 py-0.5 rounded font-bold font-mono">
+                  {q3_urgentLowPriority.length} tasks
+                </span>
+              </div>
+              
+              <div className="space-y-2 flex-1 overflow-y-auto pr-1 max-h-[160px] custom-scroll">
+                {q3_urgentLowPriority.length === 0 ? (
+                  <div className="h-full py-6 flex flex-col items-center justify-center text-center text-violet-300/20">
+                    <ShieldCheck className="w-6 h-6 mb-1 text-violet-400/15" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider">Quadrant Cleared</span>
+                  </div>
+                ) : (
+                  q3_urgentLowPriority.map(task => (
+                    <MatrixCard 
+                      key={task.id} 
+                      task={task} 
+                      isSyncing={isSyncing === task.id}
+                      onProgress={() => handleProgressStatus(task)} 
+                      onDelete={onDeleteTask}
+                      getTimeRemainingStr={getTimeRemainingStr}
+                      getPriorityBadgeStyles={getPriorityBadgeStyles}
+                    />
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Q4: Chill Backburner */}
+            <div className="border border-zinc-500/20 bg-zinc-950/5 hover:border-zinc-500/35 rounded-2xl p-4 flex flex-col relative overflow-hidden transition-all duration-300 shadow-lg min-h-[180px]">
+              <div className="flex items-center justify-between border-b border-zinc-500/10 pb-2 mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 bg-zinc-500 rounded-full"></span>
+                  <span className="font-display font-extrabold text-xs text-zinc-300 uppercase tracking-wider">Q4: Chill Backburner</span>
+                </div>
+                <span className="text-[10px] bg-zinc-500/15 text-zinc-300 border border-zinc-500/30 px-2 py-0.5 rounded font-bold font-mono">
+                  {q4_chill.length} tasks
+                </span>
+              </div>
+              
+              <div className="space-y-2 flex-1 overflow-y-auto pr-1 max-h-[160px] custom-scroll">
+                {q4_chill.length === 0 ? (
+                  <div className="h-full py-6 flex flex-col items-center justify-center text-center text-zinc-300/20">
+                    <ShieldCheck className="w-6 h-6 mb-1 text-zinc-400/15" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider">Quadrant Cleared</span>
+                  </div>
+                ) : (
+                  q4_chill.map(task => (
+                    <MatrixCard 
+                      key={task.id} 
+                      task={task} 
+                      isSyncing={isSyncing === task.id}
+                      onProgress={() => handleProgressStatus(task)} 
+                      onDelete={onDeleteTask}
+                      getTimeRemainingStr={getTimeRemainingStr}
+                      getPriorityBadgeStyles={getPriorityBadgeStyles}
+                    />
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 3. Horizontal Kanban Boards */}
+        <div className="space-y-3 pt-2">
+          <div className="flex items-center gap-1.5 border-b border-white/5 pb-1">
+            <Trello className="w-4 h-4 text-indigo-400" />
+            <h3 className="font-display font-extrabold text-sm text-white uppercase tracking-wider">Kanban Workflow columns</h3>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            {/* Column 1: Not Started */}
+            <div className="bg-black/25 border border-[#251e4d]/30 rounded-2xl p-4 flex flex-col min-h-[220px]">
+              <div className="flex items-center justify-between border-b border-[#251e4d]/40 pb-2 mb-3">
+                <span className="font-display font-extrabold text-xs text-zinc-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <span className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></span>
+                  <span>Not Started ({kanbanPending.length})</span>
+                </span>
+              </div>
+              <div className="space-y-2 flex-1 overflow-y-auto pr-1 max-h-[200px] custom-scroll font-sans">
+                {kanbanPending.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center py-8 text-center text-zinc-600 text-[10px] font-semibold uppercase tracking-wider">No pending tasks</div>
+                ) : (
+                  kanbanPending.map(task => (
+                    <KanbanCard 
+                      key={task.id}
+                      task={task}
+                      isSyncing={isSyncing === task.id}
+                      onProgress={() => handleProgressStatus(task)}
+                      onDelete={onDeleteTask}
+                      getTimeRemainingStr={getTimeRemainingStr}
+                      getPriorityBadgeStyles={getPriorityBadgeStyles}
+                    />
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Column 2: In Progress */}
+            <div className="bg-violet-950/5 border border-violet-500/15 rounded-2xl p-4 flex flex-col min-h-[220px]">
+              <div className="flex items-center justify-between border-b border-violet-500/10 pb-2 mb-3">
+                <span className="font-display font-extrabold text-xs text-violet-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <span className="w-2 h-2 bg-violet-500 rounded-full animate-ping animate-duration-1000"></span>
+                  <span>In Progress ({kanbanInProgress.length})</span>
+                </span>
+              </div>
+              <div className="space-y-2 flex-1 overflow-y-auto pr-1 max-h-[200px] custom-scroll font-sans">
+                {kanbanInProgress.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center py-8 text-center text-violet-500/20 text-[10px] font-semibold uppercase tracking-wider">None active</div>
+                ) : (
+                  kanbanInProgress.map(task => (
+                    <KanbanCard 
+                      key={task.id}
+                      task={task}
+                      isSyncing={isSyncing === task.id}
+                      onProgress={() => handleProgressStatus(task)}
+                      onRegress={() => handleRegressStatus(task)}
+                      onDelete={onDeleteTask}
+                      getTimeRemainingStr={getTimeRemainingStr}
+                      getPriorityBadgeStyles={getPriorityBadgeStyles}
+                    />
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Column 3: Completed */}
+            <div className="bg-emerald-950/5 border border-emerald-500/15 rounded-2xl p-4 flex flex-col min-h-[220px]">
+              <div className="flex items-center justify-between border-b border-emerald-500/10 pb-2 mb-3">
+                <span className="font-display font-extrabold text-xs text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
+                  <span className="w-2 h-2 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.8)]"></span>
+                  <span>Completed ({kanbanCompleted.length})</span>
+                </span>
+              </div>
+              <div className="space-y-2 flex-1 overflow-y-auto pr-1 max-h-[200px] custom-scroll font-sans">
+                {kanbanCompleted.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center py-8 text-center text-emerald-500/20 text-[10px] font-semibold uppercase tracking-wider">None completed</div>
+                ) : (
+                  kanbanCompleted.map(task => (
+                    <KanbanCard 
+                      key={task.id}
+                      task={task}
+                      isSyncing={isSyncing === task.id}
+                      onProgress={() => handleProgressStatus(task)}
+                      onRegress={() => handleRegressStatus(task)}
+                      onDelete={onDeleteTask}
+                      getTimeRemainingStr={getTimeRemainingStr}
+                      getPriorityBadgeStyles={getPriorityBadgeStyles}
+                    />
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="w-full bg-[#0f0a2d]/80 border border-[#251e4d]/40 rounded-2xl flex flex-col overflow-hidden relative transition-all shadow-lg shadow-black/40">

@@ -23,6 +23,29 @@ interface TimelineStep {
   timeSlot?: string;
 }
 
+const containerVariants = {
+  hidden: { opacity: 0 },
+  show: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.05,
+    }
+  }
+};
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 10 },
+  show: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      type: "spring" as const,
+      stiffness: 120,
+      damping: 18
+    }
+  }
+};
+
 interface InteractiveActionTimelineProps {
   messageText: string;
 }
@@ -77,6 +100,14 @@ export const InteractiveActionTimeline: React.FC<InteractiveActionTimelineProps>
             // Clean any remaining dangling characters like leading/trailing hyphens, colons, brackets, or parentheses
             cleanText = cleanText.replace(/^[:\-\s,;\[\]\(\)]+|[:\-\s,;\[\]\(\)]+$/g, '').trim();
           }
+
+          // Ensure all raw markdown like asterisks, hashes, backticks, brackets, etc. are stripped completely
+          cleanText = cleanText
+            .replace(/\*\*|\*|#+|`+/g, '') // remove asterisks, hashes, backticks
+            .replace(/\[\s*[xX]?\s*\]/g, '') // remove brackets containing space, x, X (e.g. markdown checkboxes [ ], [x], [X])
+            .replace(/\[\s*\]/g, '') // remove empty brackets [ ]
+            .replace(/^[:\-\s,;\[\]\(\)]+|[:\-\s,;\[\]\(\)]+$/g, '') // remove leading/trailing noise
+            .trim();
 
           parsedSteps.push({
             id: `step_${idCounter++}`,
@@ -201,25 +232,30 @@ export const InteractiveActionTimeline: React.FC<InteractiveActionTimelineProps>
         </div>
         <button
           onClick={handleCalendarSync}
-          className="px-2.5 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-semibold text-[10px] flex items-center gap-1.5 shadow-md transition-all cursor-pointer hover:scale-[1.03] active:scale-95"
+          className="group px-2.5 py-1.5 rounded-lg bg-purple-500/5 border border-purple-500/20 text-purple-300 font-semibold text-xs tracking-tight flex items-center gap-1.5 hover:bg-purple-500 hover:text-white hover:border-purple-500 hover:shadow-[0_0_15px_rgba(168,85,247,0.4)] transition-all duration-300 ease-in-out cursor-pointer hover:scale-[1.03] active:scale-95"
         >
-          <Calendar className="w-3 h-3 text-indigo-200" />
+          <Calendar className="w-3 h-3 text-purple-300 group-hover:text-white transition-colors duration-300" />
           <span>Sync to Calendar</span>
         </button>
       </div>
 
       {/* Main checklist */}
-      <div className="space-y-2 mb-4">
+      <motion.div 
+        className="space-y-2 mb-4"
+        variants={containerVariants}
+        initial="hidden"
+        animate="show"
+      >
         {steps.map((step, index) => {
           const isActive = step.id === activeStepId;
           return (
             <motion.div
               key={step.id}
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: index * 0.05 }}
+              variants={itemVariants}
               onClick={() => handleSelectActiveStep(step)}
-              className={`group flex items-center justify-between gap-3 p-2.5 rounded-xl border transition-all cursor-pointer ${
+              className={`group flex items-center justify-between gap-3 p-2.5 rounded-xl border transition-all duration-300 cursor-pointer ${
+                step.completed ? 'opacity-40' : 'opacity-100'
+              } ${
                 isActive 
                   ? 'bg-violet-950/40 border-violet-500/40 shadow-[inset_0_0_10px_rgba(139,92,246,0.1)]' 
                   : 'bg-black/20 border-violet-950/20 hover:border-violet-800/30 hover:bg-violet-950/10'
@@ -254,7 +290,7 @@ export const InteractiveActionTimeline: React.FC<InteractiveActionTimelineProps>
                 </motion.button>
 
                 <div className="min-w-0">
-                  <h5 className={`text-xs font-bold leading-snug truncate ${
+                  <h5 className={`text-xs font-bold leading-snug truncate transition-all duration-300 ${
                     step.completed ? 'line-through text-zinc-500' : 'text-zinc-100'
                   }`}>
                     {step.title}
@@ -287,7 +323,7 @@ export const InteractiveActionTimeline: React.FC<InteractiveActionTimelineProps>
             </motion.div>
           );
         })}
-      </div>
+      </motion.div>
 
       {/* Focus Timer Block Widget */}
       <div className="border border-violet-500/25 bg-[#150e3d]/60 rounded-2xl p-3.5 flex flex-col md:flex-row items-center justify-between gap-4">
