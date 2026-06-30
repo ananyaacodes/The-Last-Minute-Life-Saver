@@ -186,7 +186,7 @@ Organized by:
 - React
 - TypeScript
 - Coding Ninjas
-- Google Developer Groups
+- Google For Developers
 
 ---
 
