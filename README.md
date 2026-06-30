@@ -116,13 +116,13 @@ The challenge was to build an AI-powered assistant that doesn't just remind user
 ### Clone Repository
 
 ```bash
-git clone https://github.com/<your-username>/<repository-name>.git
+git clone https://github.com/<ananyaacodes>/<NudgeVIBE2SHIP>.git
 ```
 
 ### Navigate into the project
 
 ```bash
-cd <repository-name>
+cd <NudgeVIBE2SHIP>
 ```
 
 ### Install dependencies
@@ -165,17 +165,6 @@ src/
 - 📈 Advanced AI Analytics
 - 🌍 Multi-language Support
 
----
-
-# 👥 Team
-
-**Team Name:** <Your Team Name>
-
-| Name | Role |
-|------|------|
-| Ananya Raj | AI Developer & Frontend |
-| <Member 2> | Backend |
-| <Member 3> | UI/UX |
 
 ---
 
@@ -209,6 +198,5 @@ This project is licensed under the MIT License.
 
 <div align="center">
 
-### ⭐ If you like this project, consider giving it a star!
 
 </div>
