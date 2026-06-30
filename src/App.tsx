@@ -66,6 +66,7 @@ export default function App() {
     }
     return false;
   });
+  const [isBannerVisible, setIsBannerVisible] = useState<boolean>(true);
   const [notificationPermission, setNotificationPermission] = useState<string>(() => {
     return typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default';
   });
@@ -854,48 +855,51 @@ export default function App() {
 
       {/* Proactive Flag Banner (Critical alarm less than 24h away) */}
       <AnimatePresence>
-        {currentUser && criticalTasks.length > 0 && !isAlarmDismissed && (
+        {currentUser && criticalTasks.length > 0 && !isAlarmDismissed && isBannerVisible && (
           <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
+            initial={{ opacity: 0, height: 0, y: -20 }}
+            animate={{ opacity: 1, height: 'auto', y: 0 }}
+            exit={{ opacity: 0, height: 0, y: -20 }}
+            transition={{ duration: 0.25, ease: 'easeInOut' }}
             className="relative overflow-hidden border-b border-red-900/30 px-4 py-3 sm:px-6 sm:py-2.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-indigo-100 z-10"
           >
             {/* Ambient pulsing background container */}
             <div className="absolute inset-0 alarm-banner-pulse pointer-events-none -z-10" />
 
-            <div className="flex items-center gap-2 relative z-10">
+            <div className="flex items-center gap-2 relative z-10 pr-10 sm:pr-0">
               <AlertOctagon className="w-4.5 h-4.5 text-rose-400 animate-bounce shrink-0" />
               <span>
                 <strong>CRITICAL ALARM:</strong> you have <strong>{criticalTasks.length}</strong> deadline(s) due in less than 24 hours!
               </span>
             </div>
-            <div className="flex items-center gap-3 relative z-10 w-full sm:w-auto justify-between sm:justify-start">
+            <div className="flex items-center gap-3 relative z-10 w-full sm:w-auto justify-between sm:justify-start pr-10 sm:pr-0">
               <button
                 onClick={() => handleSendMessage("Re-plan my day to finish my urgent tasks before they are due.")}
                 className="btn-pill-lavender text-white tracking-tight shrink-0 w-full text-center px-3 py-2 !rounded-xl text-xs font-semibold sm:w-auto sm:px-5 sm:py-1.5 sm:!rounded-full sm:text-[11px] cursor-pointer shadow-[0_0_15px_rgba(167,139,250,0.35)] hover:shadow-[0_0_30px_rgba(167,139,250,0.95),_0_0_15px_rgba(139,92,246,0.65)] focus:shadow-[0_0_30px_rgba(167,139,250,0.95),_0_0_15px_rgba(139,92,246,0.65)] hover:scale-[1.01] sm:hover:scale-105 focus:scale-105 transition-all duration-300 outline-none"
               >
                 Have Nudge Re-Plan Day
               </button>
-              <button
-                onClick={() => {
-                  setIsAlarmDismissed(true);
-                  if (typeof window !== 'undefined') {
-                    sessionStorage.setItem('nudge_alarm_dismissed', 'true');
-                  }
-                }}
-                className="text-indigo-300 hover:text-white p-2 hover:bg-white/5 rounded-xl border border-white/5 sm:border-0 sm:p-1 transition-all cursor-pointer flex items-center justify-center shrink-0"
-                title="Dismiss Alarm"
-              >
-                <X className="w-4 h-4 sm:w-3.5 sm:h-3.5" />
-              </button>
             </div>
+
+            <button
+              onClick={() => {
+                setIsBannerVisible(false);
+                setIsAlarmDismissed(true);
+                if (typeof window !== 'undefined') {
+                  sessionStorage.setItem('nudge_alarm_dismissed', 'true');
+                }
+              }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-purple-300/70 hover:text-white dark:hover:text-neutral-100 p-2 hover:bg-white/10 rounded-full transition-all duration-300 cursor-pointer flex items-center justify-center shrink-0 z-20 outline-none focus:outline-none focus:bg-white/10"
+              title="Dismiss Alarm"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
 
       {/* Main workspace */}
-      <div className={`flex-1 flex ${needsAuth ? 'min-h-0 h-auto overflow-visible' : 'overflow-hidden'} z-10`}>
+      <div className={`flex-1 flex ${needsAuth ? 'min-h-0 h-auto overflow-visible' : 'overflow-hidden'} transition-all duration-300 ease-out z-10`}>
         {needsAuth ? (
           /* Landing Screen / Onboarding */
           <div className="flex-1 flex flex-col items-center justify-center py-10 px-6 text-center relative w-full">

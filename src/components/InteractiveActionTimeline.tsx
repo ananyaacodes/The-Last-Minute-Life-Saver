@@ -50,6 +50,86 @@ interface InteractiveActionTimelineProps {
   messageText: string;
 }
 
+const formatInlineKeywords = (text: string): React.ReactNode[] => {
+  if (!text) return [];
+
+  // Match key-value attributes like Category: Hackathon, Status: Urgent/Critical,
+  // as well as other indicators.
+  const regex = /(\b(?:Category|Status|Priority|Due|Est|Urgency):\s*[A-Za-z0-9_\/\- +]+|(?:Time Remaining:\s*~?\s*[^.\n,;!)]+|\[\s*Est:[^\]]+\]|\[\s*Deadline:[^\]]+\])|\b(?:Pending|Completed|Overdue|In Progress|Urgent\/Critical|Urgent|Critical)\b)/gi;
+
+  const parts = text.split(regex);
+  if (parts.length === 1) {
+    return [text];
+  }
+
+  const result: React.ReactNode[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (!part) continue;
+
+    if (i % 2 === 1) {
+      const lowerPart = part.toLowerCase();
+
+      const kvMatch = part.match(/^(Category|Status|Priority|Due|Est|Urgency):\s*(.+)$/i);
+      if (kvMatch) {
+        const key = kvMatch[1];
+        const val = kvMatch[2].trim();
+        const isUrgentCritical = val.toLowerCase() === 'urgent/critical' || val.toLowerCase() === 'urgent' || val.toLowerCase() === 'critical';
+
+        if (isUrgentCritical) {
+          result.push(
+            <span key={`kv-${i}`} className="text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2 py-0.5 rounded-full text-xs font-mono inline-flex items-center gap-1 mx-1 my-0.5 shadow-[0_0_8px_rgba(239,68,68,0.1)] font-bold">
+              <span className="font-semibold text-rose-300/90">{key}:</span>
+              <span>{val}</span>
+            </span>
+          );
+        } else {
+          result.push(
+            <span key={`kv-${i}`} className="inline-flex items-center gap-1.5 bg-[#160e3d]/60 border border-purple-500/25 rounded-lg px-2 py-0.5 text-xs font-mono my-0.5 mx-1 shadow-[inset_0_1px_1px_rgba(255,255,255,0.03)] hover:border-purple-500/45 transition-all">
+              <span className="text-purple-300/90 font-semibold">{key}:</span>
+              <span className="text-zinc-200 font-medium">{val}</span>
+            </span>
+          );
+        }
+      }
+      else if (lowerPart === 'urgent/critical' || lowerPart === 'urgent' || lowerPart === 'critical') {
+        result.push(
+          <span key={`status-${i}`} className="text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2 py-0.5 rounded-full text-xs font-mono inline-block mx-1 my-0.5 font-bold shadow-[0_0_8px_rgba(239,68,68,0.1)]">
+            {part}
+          </span>
+        );
+      }
+      else if (['pending', 'completed', 'overdue', 'in progress'].includes(lowerPart)) {
+        let colorClass = "text-amber-400 bg-amber-500/10 border border-amber-500/20";
+        if (lowerPart === 'completed') {
+          colorClass = "text-emerald-400 bg-emerald-500/10 border border-emerald-500/20";
+        } else if (lowerPart === 'overdue') {
+          colorClass = "text-rose-400 bg-rose-500/10 border border-rose-500/20";
+        } else if (lowerPart === 'in progress') {
+          colorClass = "text-indigo-400 bg-indigo-500/10 border border-indigo-500/20";
+        }
+        result.push(
+          <span key={`status-${i}`} className={`${colorClass} px-2 py-0.5 rounded-full text-[10px] font-mono inline-block mx-1 my-0.5 select-none font-semibold shadow-[0_1px_2px_rgba(0,0,0,0.2)]`}>
+            {part}
+          </span>
+        );
+      }
+      else {
+        result.push(
+          <span key={`time-${i}`} className="text-purple-300/90 bg-purple-500/5 border border-purple-500/10 px-2 py-0.5 rounded-md tracking-wide text-xs font-medium inline-flex items-center gap-1.5 mx-1 my-0.5">
+            <Clock className="w-3 h-3 text-violet-400 shrink-0" />
+            <span>{part}</span>
+          </span>
+        );
+      }
+    } else {
+      result.push(part);
+    }
+  }
+
+  return result;
+};
+
 export const InteractiveActionTimeline: React.FC<InteractiveActionTimelineProps> = ({ messageText }) => {
   const [steps, setSteps] = useState<TimelineStep[]>([]);
   const [activeStepId, setActiveStepId] = useState<string>('');
@@ -150,6 +230,13 @@ export const InteractiveActionTimeline: React.FC<InteractiveActionTimelineProps>
       setActiveBlockDuration(parsedSteps[0].duration);
     }
   }, [messageText]);
+
+  // Dispatch mount event when steps are parsed and activeStepId is set
+  useEffect(() => {
+    if (steps.length > 0) {
+      window.dispatchEvent(new CustomEvent('nudge-timeline-mounted'));
+    }
+  }, [steps, activeStepId]);
 
   // Timer logic
   useEffect(() => {
@@ -289,11 +376,11 @@ export const InteractiveActionTimeline: React.FC<InteractiveActionTimelineProps>
                   </motion.div>
                 </motion.button>
 
-                <div className="min-w-0">
-                  <h5 className={`text-xs font-bold leading-snug truncate transition-all duration-300 ${
+                <div className="min-w-0 flex-1">
+                  <h5 className={`text-xs font-bold leading-snug transition-all duration-300 ${
                     step.completed ? 'line-through text-zinc-500' : 'text-zinc-100'
                   }`}>
-                    {step.title}
+                    {formatInlineKeywords(step.title)}
                   </h5>
                   <div className="flex items-center gap-1.5 mt-0.5">
                     <span className="text-[9px] text-violet-400/80 font-semibold uppercase tracking-wider">

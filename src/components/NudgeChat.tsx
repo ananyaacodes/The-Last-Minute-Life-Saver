@@ -165,14 +165,8 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
 
   // Voice Integration State variables
   const [isListening, setIsListening] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingDuration, setRecordingDuration] = useState(0);
   const [voiceError, setVoiceError] = useState<string | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const timerRef = useRef<any>(null);
   const recognitionRef = useRef<any>(null);
-  const recordingRecognitionRef = useRef<any>(null);
-  const recordingTranscriptRef = useRef<string>('');
 
   const [aiVoiceEnabled, setAiVoiceEnabled] = useState(() => {
     return localStorage.getItem('ai_voice_responses') === 'true';
@@ -233,282 +227,99 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatHistory, isLoading]);
 
-  // Voice-to-Text Speech Recognition Initializer
+  // Listen to structured roadmap panel mount & update events to scroll and anchor cleanly
   useEffect(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      const rec = new SpeechRecognition();
-      rec.continuous = false; // Stops automatically when user stops speaking
-      rec.interimResults = true;
-      rec.lang = 'en-US';
+    const handleTimelineMount = () => {
+      // Small timeout to allow DOM/layout changes to settle
+      setTimeout(() => {
+        chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      }, 80);
+    };
 
-      rec.onstart = () => {
-        latestTranscriptRef.current = '';
-      };
-
-      rec.onresult = (event: any) => {
-        let interimTranscript = '';
-        let finalTranscript = '';
-
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript;
-          } else {
-            interimTranscript += event.results[i][0].transcript;
-          }
-        }
-
-        if (finalTranscript) {
-          setInputText(prev => {
-            const updated = prev + (prev ? ' ' : '') + finalTranscript;
-            latestTranscriptRef.current = updated;
-            return updated;
-          });
-        }
-      };
-
-      rec.onerror = (event: any) => {
-        if (event.error === 'no-speech' || event.error === 'aborted') {
-          console.warn('Speech recognition warning:', event.error);
-          return;
-        }
-
-        console.error('Speech recognition error:', event.error);
-        setIsListening(false);
-        if (event.error === 'not-allowed') {
-          setVoiceError("Microphone permission was blocked. To grant access, click 'Open in New Tab' at the top right of the preview panel, or check your browser's site settings.");
-        } else {
-          setVoiceError(`Voice transcription issue: ${event.error}. Please check your browser's microphone permissions.`);
-        }
-      };
-
-      rec.onend = () => {
-        setIsListening(false);
-        const finalSpeech = latestTranscriptRef.current.trim();
-        if (finalSpeech) {
-          onSendMessage(finalSpeech);
-          setInputText('');
-          latestTranscriptRef.current = '';
-        }
-      };
-
-      recognitionRef.current = rec;
-    }
+    window.addEventListener('nudge-timeline-mounted', handleTimelineMount);
+    return () => {
+      window.removeEventListener('nudge-timeline-mounted', handleTimelineMount);
+    };
   }, []);
 
+  // Voice-to-Text Event Handler & Dynamically Instantiated Speech Recognition Engine
   const toggleListening = () => {
     setVoiceError(null);
-    if (!recognitionRef.current) {
-      setVoiceError("Voice-to-text is not fully supported in this browser. Please use Google Chrome or Microsoft Edge.");
-      return;
-    }
 
     if (isListening) {
-      recognitionRef.current.stop();
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (err) {
+          console.warn("Speech recognition stop error:", err);
+        }
+      }
       setIsListening(false);
     } else {
       try {
-        latestTranscriptRef.current = '';
-        recognitionRef.current.start();
+        const SpeechRecognitionClass = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+        if (!SpeechRecognitionClass) {
+          setVoiceError("Speech-to-text is not supported in this browser. Please use Google Chrome or Microsoft Edge.");
+          return;
+        }
+
+        let recognition: any;
+        try {
+          recognition = new SpeechRecognitionClass();
+        } catch (initErr: any) {
+          console.warn("Could not instantiate SpeechRecognitionClass natively:", initErr);
+          setVoiceError("Speech-to-text engine initialization failed. Microphone access might be restricted.");
+          return;
+        }
+
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
+
+        recognition.onstart = () => {
+          setIsListening(true);
+          setVoiceError(null);
+        };
+
+        recognition.onresult = (event: any) => {
+          let transcript = '';
+          for (let i = 0; i < event.results.length; i++) {
+            transcript += event.results[i][0].transcript;
+          }
+          setInputText(transcript);
+        };
+
+        recognition.onerror = (event: any) => {
+          if (event.error === 'not-allowed') {
+            console.warn('Microphone permission was denied (not-allowed) by the user or browser context.');
+            setIsListening(false);
+            setVoiceError("Microphone permission was blocked. Please grant access in your browser or click 'Open in New Tab' to speak.");
+            return;
+          }
+
+          if (event.error === 'no-speech' || event.error === 'aborted') {
+            console.warn('Speech recognition warning:', event.error);
+            return;
+          }
+
+          console.error('Speech recognition error:', event.error);
+          setIsListening(false);
+          setVoiceError(`Voice transcription issue: ${event.error}.`);
+        };
+
+        recognition.onend = () => {
+          setIsListening(false);
+        };
+
+        recognitionRef.current = recognition;
+        recognition.start();
         setIsListening(true);
       } catch (err: any) {
         console.error("Failed to start SpeechRecognition:", err);
         setVoiceError(`Could not start speech recognition: ${err.message || err}`);
+        setIsListening(false);
       }
     }
-  };
-
-  // Direct Voice Message Sending logic
-  const startVoiceRecording = async () => {
-    if (isRecording) return;
-    setVoiceError(null);
-
-    const SpeechRecognitionClass = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognitionClass) {
-      setVoiceError("Voice input isn't supported in this browser, please type instead.");
-      return;
-    }
-
-    // Initialize recording transcript
-    recordingTranscriptRef.current = '';
-
-    // Initialize & start Web Speech API Speech Recognition
-    const rec = new SpeechRecognitionClass();
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.lang = 'en-US';
-    
-    rec.onresult = (event: any) => {
-      let text = '';
-      for (let i = 0; i < event.results.length; ++i) {
-        text += event.results[i][0].transcript;
-      }
-      recordingTranscriptRef.current = text;
-    };
-
-    rec.onerror = (event: any) => {
-      console.warn("Speech recognition during recording warning:", event.error);
-    };
-
-    rec.onend = () => {
-      console.log("Speech recognition during recording stopped.");
-    };
-
-    recordingRecognitionRef.current = rec;
-    try {
-      rec.start();
-    } catch (e) {
-      console.error("Failed to start speech recognition:", e);
-    }
-
-    try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error("navigator.mediaDevices not accessible");
-      }
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-      mediaRecorderRef.current = mediaRecorder;
-      const chunks: Blob[] = [];
-
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) {
-          chunks.push(e.data);
-        }
-      };
-
-      mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(chunks, { type: 'audio/webm' });
-        const audioUrl = URL.createObjectURL(audioBlob);
-        
-        const mins = Math.floor(recordingDuration / 60);
-        const secs = recordingDuration % 60;
-        const durationStr = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-
-        if (recordingRecognitionRef.current) {
-          try {
-            recordingRecognitionRef.current.stop();
-          } catch (e) {}
-        }
-
-        const transcribedText = recordingTranscriptRef.current.trim() || "🎙️ Voice Message";
-
-        // Send Voice message to chat
-        onSendMessage(transcribedText, audioUrl, durationStr);
-        
-        // Cleanup streams
-        stream.getTracks().forEach(track => track.stop());
-        setRecordingDuration(0);
-        setIsRecording(false);
-      };
-
-      setIsRecording(true);
-      setRecordingDuration(0);
-      mediaRecorder.start();
-
-      timerRef.current = setInterval(() => {
-        setRecordingDuration(prev => prev + 1);
-      }, 1000);
-
-    } catch (err) {
-      console.warn("Direct microphone unavailable (or sandboxed inside iframe). Initiating highly polished demo recorder:", err);
-      // Fallback
-      simulateDemoVoiceMsg();
-      setVoiceError("Microphone input was restricted in the preview pane. We started a smart voice simulator fallback! To test real recording, click 'Open in New Tab' at the top right.");
-    }
-  };
-
-  const stopVoiceRecording = () => {
-    if (!isRecording) return;
-    
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-
-    if (recordingRecognitionRef.current) {
-      try {
-        recordingRecognitionRef.current.stop();
-      } catch (e) {
-        console.error("Error stopping recording speech recognition:", e);
-      }
-    }
-
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-    } else {
-      // Demo recording mode stop
-      const mins = Math.floor(recordingDuration / 60);
-      const secs = recordingDuration % 60;
-      const durationStr = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-      
-      const transcribedText = recordingTranscriptRef.current.trim() || "Hey Nudge, please review my schedule and add tasks.";
-      onSendMessage(transcribedText, "demo-audio-url", durationStr);
-      setIsRecording(false);
-      setRecordingDuration(0);
-    }
-  };
-
-  const cancelVoiceRecording = () => {
-    if (!isRecording) return;
-    
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-
-    if (recordingRecognitionRef.current) {
-      try {
-        recordingRecognitionRef.current.onresult = null;
-        recordingRecognitionRef.current.onerror = null;
-        recordingRecognitionRef.current.onend = null;
-        recordingRecognitionRef.current.stop();
-      } catch (e) {}
-      recordingRecognitionRef.current = null;
-    }
-
-    if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.onstop = null;
-      if (mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
-      }
-    }
-
-    setIsRecording(false);
-    setRecordingDuration(0);
-  };
-
-  const simulateDemoVoiceMsg = () => {
-    setIsRecording(true);
-    setRecordingDuration(0);
-
-    const SpeechRecognitionClass = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognitionClass) {
-      const rec = new SpeechRecognitionClass();
-      rec.continuous = true;
-      rec.interimResults = true;
-      rec.lang = 'en-US';
-      
-      rec.onresult = (event: any) => {
-        let text = '';
-        for (let i = 0; i < event.results.length; ++i) {
-          text += event.results[i][0].transcript;
-        }
-        recordingTranscriptRef.current = text;
-      };
-
-      rec.onerror = (event: any) => {
-        console.warn("Speech recognition error in simulator:", event.error);
-      };
-
-      recordingRecognitionRef.current = rec;
-      try {
-        rec.start();
-      } catch (e) {}
-    }
-    
-    timerRef.current = setInterval(() => {
-      setRecordingDuration(prev => prev + 1);
-    }, 1000);
   };
 
   const handleSend = (e: React.FormEvent) => {
@@ -517,7 +328,9 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
     onSendMessage(inputText);
     setInputText('');
     if (isListening && recognitionRef.current) {
-      recognitionRef.current.stop();
+      try {
+        recognitionRef.current.stop();
+      } catch (err) {}
       setIsListening(false);
     }
   };
@@ -587,9 +400,13 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
   const formatInlineKeywords = (text: string): React.ReactNode[] => {
     if (!text) return [];
 
-    // Group 1: Time indicators
-    // Group 2: Status indicators
-    const regex = /(Time Remaining:\s*~?\s*[^.\n,;!)]+|\[\s*Est:[^\]]+\]|\[\s*Deadline:[^\]]+\])|\b(Pending|Completed|Overdue|In Progress)\b/gi;
+    // Match key-value attributes like Category: Hackathon, Status: Urgent/Critical,
+    // as well as other indicators.
+    // Captured groups:
+    // 1. Key-Value attribute: (Category|Status|Priority|Due|Est|Urgency):\s*([A-Za-z0-9_\/\- +]+)
+    // 2. Standard time indicators: (Time Remaining:\s*~?\s*[^.\n,;!)]+|\[\s*Est:[^\]]+\]|\[\s*Deadline:[^\]]+\])
+    // 3. Simple status words: \b(Pending|Completed|Overdue|In Progress|Urgent\/Critical|Urgent|Critical)\b
+    const regex = /(\b(?:Category|Status|Priority|Due|Est|Urgency):\s*[A-Za-z0-9_\/\- +]+|(?:Time Remaining:\s*~?\s*[^.\n,;!)]+|\[\s*Est:[^\]]+\]|\[\s*Deadline:[^\]]+\])|\b(?:Pending|Completed|Overdue|In Progress|Urgent\/Critical|Urgent|Critical)\b)/gi;
 
     const parts = text.split(regex);
     if (parts.length === 1) {
@@ -601,32 +418,68 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
       const part = parts[i];
       if (!part) continue;
 
-      const mod = i % 3;
-      if (mod === 0) {
-        result.push(part);
-      } else if (mod === 1) {
-        // Time indicator
-        result.push(
-          <span key={`time-${i}`} className="text-purple-300/80 tracking-wide text-sm font-medium italic inline-block mx-0.5">
-            {part}
-          </span>
-        );
-      } else if (mod === 2) {
-        // Status indicator
-        let colorClass = "text-amber-400 bg-amber-500/10";
+      // When split with a single capture group, matched items reside at odd indices (i % 2 === 1)
+      if (i % 2 === 1) {
         const lowerPart = part.toLowerCase();
-        if (lowerPart === 'completed') {
-          colorClass = "text-emerald-400 bg-emerald-500/10";
-        } else if (lowerPart === 'overdue') {
-          colorClass = "text-rose-400 bg-rose-500/10";
-        } else if (lowerPart === 'in progress') {
-          colorClass = "text-indigo-400 bg-indigo-500/10";
+
+        // Check if it is a key-value attribute
+        const kvMatch = part.match(/^(Category|Status|Priority|Due|Est|Urgency):\s*(.+)$/i);
+        if (kvMatch) {
+          const key = kvMatch[1];
+          const val = kvMatch[2].trim();
+          const isUrgentCritical = val.toLowerCase() === 'urgent/critical' || val.toLowerCase() === 'urgent' || val.toLowerCase() === 'critical';
+
+          if (isUrgentCritical) {
+            result.push(
+              <span key={`kv-${i}`} className="text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2 py-0.5 rounded-full text-xs font-mono inline-flex items-center gap-1 mx-1 my-0.5 shadow-[0_0_8px_rgba(239,68,68,0.1)]">
+                <span className="font-semibold text-rose-300/90">{key}:</span>
+                <span className="font-bold">{val}</span>
+              </span>
+            );
+          } else {
+            result.push(
+              <span key={`kv-${i}`} className="inline-flex items-center gap-1.5 bg-[#160e3d]/60 border border-purple-500/25 rounded-lg px-2 py-0.5 text-xs font-mono my-0.5 mx-1 shadow-[inset_0_1px_1px_rgba(255,255,255,0.03)] hover:border-purple-500/45 transition-all">
+                <span className="text-purple-300/90 font-semibold">{key}:</span>
+                <span className="text-zinc-200 font-medium">{val}</span>
+              </span>
+            );
+          }
         }
-        result.push(
-          <span key={`status-${i}`} className={`${colorClass} px-2 py-0.5 rounded text-xs font-mono inline-block mx-0.5 select-none font-semibold`}>
-            {part}
-          </span>
-        );
+        // Standalone Urgent/Critical or Urgent or Critical status
+        else if (lowerPart === 'urgent/critical' || lowerPart === 'urgent' || lowerPart === 'critical') {
+          result.push(
+            <span key={`status-${i}`} className="text-rose-400 bg-rose-500/10 border border-rose-500/20 px-2 py-0.5 rounded-full text-xs font-mono inline-block mx-1 my-0.5 font-bold shadow-[0_0_8px_rgba(239,68,68,0.1)]">
+              {part}
+            </span>
+          );
+        }
+        // Standard status words
+        else if (['pending', 'completed', 'overdue', 'in progress'].includes(lowerPart)) {
+          let colorClass = "text-amber-400 bg-amber-500/10 border border-amber-500/20";
+          if (lowerPart === 'completed') {
+            colorClass = "text-emerald-400 bg-emerald-500/10 border border-emerald-500/20";
+          } else if (lowerPart === 'overdue') {
+            colorClass = "text-rose-400 bg-rose-500/10 border border-rose-500/20";
+          } else if (lowerPart === 'in progress') {
+            colorClass = "text-indigo-400 bg-indigo-500/10 border border-indigo-500/20";
+          }
+          result.push(
+            <span key={`status-${i}`} className={`${colorClass} px-2 py-0.5 rounded-full text-[10px] font-mono inline-block mx-1 my-0.5 select-none font-semibold shadow-[0_1px_2px_rgba(0,0,0,0.2)]`}>
+              {part}
+            </span>
+          );
+        }
+        // Time / Deadline indicators
+        else {
+          result.push(
+            <span key={`time-${i}`} className="text-purple-300/90 bg-purple-500/5 border border-purple-500/10 px-2 py-0.5 rounded-md tracking-wide text-xs font-medium inline-flex items-center gap-1.5 mx-1 my-0.5">
+              <Clock className="w-3 h-3 text-violet-400 shrink-0" />
+              <span>{part}</span>
+            </span>
+          );
+        }
+      } else {
+        result.push(part);
       }
     }
 
@@ -728,13 +581,33 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
           </button>
         </div>
 
-        <div className="p-4 space-y-3.5 text-xs sm:text-sm text-zinc-300 font-mono select-text">
-          <div className="flex flex-col sm:flex-row sm:items-baseline gap-1 pb-2.5 border-b border-white/5">
-            <span className="text-purple-400 font-bold shrink-0">Subject:</span>
-            <span className="text-white font-medium select-all break-words">{subject}</span>
+        <div className="px-6 py-4 space-y-3.5 text-xs sm:text-sm text-zinc-300 font-mono select-text">
+          <div className="flex flex-col sm:flex-row sm:items-baseline gap-2 pb-2.5 border-b border-white/5">
+            <span className="text-purple-300 font-semibold shrink-0">Subject:</span>
+            <span className="text-neutral-200 font-medium select-all break-words">{subject}</span>
           </div>
-          <div className="whitespace-pre-wrap leading-relaxed select-all text-zinc-300 font-sans pr-2">
-            {body}
+          <div className="whitespace-pre-wrap leading-relaxed select-all text-neutral-200 font-sans pr-2 space-y-2">
+            {body.split('\n').map((line, idx) => {
+              if (line.trim() === '') {
+                return <div key={idx} className="h-2" />;
+              }
+              const trimmed = line.trim();
+              const isGreeting = trimmed.startsWith('Dear') || trimmed.startsWith('Hello') || trimmed.startsWith('Hi') || trimmed.startsWith('To ');
+              const isSignoff = trimmed.startsWith('Best') || trimmed.startsWith('Sincerely') || trimmed.startsWith('Thanks') || trimmed.startsWith('Warm') || trimmed.startsWith('Regards');
+              
+              if (isGreeting || isSignoff) {
+                return (
+                  <div key={idx} className="text-purple-300 font-semibold">
+                    {line}
+                  </div>
+                );
+              }
+              return (
+                <div key={idx} className="text-neutral-200">
+                  {line}
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -1138,7 +1011,7 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
       </div>
 
       {/* Message List area */}
-      <div className={`flex-1 overflow-y-auto p-4 space-y-4 ${chatHistory.length === 0 ? 'flex flex-col justify-center' : ''}`}>
+      <div className={`flex-1 max-h-[calc(100vh-220px)] overflow-y-auto px-4 py-4 space-y-4 ${chatHistory.length === 0 ? 'flex flex-col justify-center' : ''}`}>
         {chatHistory.length === 0 ? (
           <div className="flex flex-col items-center justify-center max-w-md mx-auto my-auto text-center space-y-5 p-8 rounded-[24px] bg-neutral-950/40 backdrop-blur-md border border-white/5 shadow-2xl relative z-10">
             <div className="relative">
@@ -1210,9 +1083,9 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
               if (isToolOnly) return null;
 
               return (
-                <div key={msg.id} className={`flex items-start gap-3 ${isUser ? 'justify-end' : 'justify-start'}`}>
+                <div key={msg.id} className={`flex items-start gap-3 w-full ${isUser ? 'justify-end' : 'justify-start'}`}>
                   {!isUser && (
-                    <div className={`w-7 h-7 flex items-center justify-center relative shrink-0 mt-0.5 ${getOrbClass(orbState)}`}>
+                    <div className={`w-7 h-7 flex items-center justify-center relative shrink-0 mt-0.5 rounded-full ${getOrbClass(orbState)} shadow-[0_0_10px_rgba(167,139,250,0.15)]`}>
                       <div className="flex gap-[2px] items-center justify-center">
                         <div className="nudge-eye-small" />
                         <div className="nudge-eye-small" />
@@ -1220,10 +1093,10 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
                     </div>
                   )}
 
-                  <div className="max-w-[85%] flex flex-col gap-1.5">
-                    <div className={`p-4 text-sm leading-relaxed ${
+                  <div className="max-w-[82%] sm:max-w-[78%] flex flex-col gap-1.5">
+                    <div className={`p-3.5 text-xs sm:text-sm leading-relaxed ${
                       isUser 
-                        ? 'bg-gradient-to-r from-purple-600/20 to-purple-500/10 border border-purple-500/20 rounded-[20px] rounded-br-none shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)] font-medium text-[#f1edff]' 
+                        ? 'bg-gradient-to-r from-purple-600/20 to-purple-500/10 border border-purple-500/20 rounded-[20px] rounded-tr-none shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)] font-medium text-[#f1edff]' 
                         : 'bg-neutral-900/30 backdrop-blur-sm rounded-[20px] rounded-bl-none border border-white/5 shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)] text-zinc-100'
                     }`}>
                       {renderMessageContent(msg)}
@@ -1264,14 +1137,20 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
                       </div>
                     )}
                   </div>
+
+                  {isUser && (
+                    <div className="w-7 h-7 flex items-center justify-center relative shrink-0 mt-0.5 rounded-full bg-violet-600/20 border border-violet-500/30 shadow-[0_0_10px_rgba(139,92,246,0.15)]">
+                      <span className="text-[10px] font-mono font-bold text-violet-300">U</span>
+                    </div>
+                  )}
                 </div>
               );
             })}
 
             {/* Loading / Thinking bubble */}
             {isLoading && (
-              <div className="flex items-start gap-3">
-                <div className="w-7 h-7 flex flex-col items-center justify-center relative shrink-0 mt-1 nudge-orb-thinking">
+              <div className="flex items-start gap-3 w-full justify-start">
+                <div className="w-7 h-7 flex flex-col items-center justify-center relative shrink-0 mt-1 rounded-full nudge-orb-thinking shadow-[0_0_10px_rgba(167,139,250,0.15)]">
                   {/* Subtle character eyes */}
                   <div className="flex gap-[2px] items-center justify-center">
                     <div className="nudge-eye-small" />
@@ -1346,114 +1225,61 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
                 : 'border-[#251e4d]/75'
             }`}>
               <div className="flex-1 flex items-center relative min-w-0">
-                {isRecording ? (
-                  /* Recording Voice Message UI */
-                  <div className="flex items-center justify-between w-full px-4 py-1 bg-violet-950/20 rounded-full">
-                    <div className="flex items-center gap-3">
-                      <span className="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
-                      <span className="text-xs text-indigo-200 font-mono font-bold">
-                        Recording... {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60) < 10 ? '0' : ''}{recordingDuration % 60}
-                      </span>
-                      {/* Spectrogram visualization wave */}
-                      <div className="flex items-center gap-[2px] h-3">
-                        <div className="w-[2.5px] h-2 bg-red-400 animate-bounce" style={{ animationDelay: '0ms' }} />
-                        <div className="w-[2.5px] h-3.5 bg-red-400 animate-bounce" style={{ animationDelay: '150ms' }} />
-                        <div className="w-[2.5px] h-1 bg-red-400 animate-bounce" style={{ animationDelay: '300ms' }} />
-                        <div className="w-[2.5px] h-2.5 bg-red-400 animate-bounce" style={{ animationDelay: '450ms' }} />
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        type="button"
-                        onClick={cancelVoiceRecording}
-                        className="p-1 px-2.5 rounded-full bg-zinc-850 hover:bg-zinc-800 text-zinc-300 text-[10px] font-extrabold transition-all cursor-pointer"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={stopVoiceRecording}
-                        className="p-1 px-3 rounded-full bg-gradient-to-tr from-violet-600 to-indigo-600 hover:scale-105 text-white text-[10px] font-extrabold transition-all cursor-pointer flex items-center gap-1 shadow-md"
-                      >
-                        <Send className="w-3 h-3 fill-white text-white" /> Send Msg
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  /* Standard Input / Voice-to-Text UI */
-                  <>
-                    <input
-                      type="text"
-                      required
-                      disabled={isLoading}
-                      placeholder={isLoading ? "Nudge is working..." : (isListening ? "Listening... Speak now..." : "Message Nudge...")}
-                      value={inputText}
-                      onChange={e => setInputText(e.target.value)}
-                      onFocus={() => setIsInputFocused(true)}
-                      onBlur={() => setIsInputFocused(false)}
-                      className="bg-transparent border-none focus:outline-none focus:ring-0 text-sm px-4 flex-grow text-zinc-100 placeholder:text-zinc-500 min-w-0"
-                    />
-                    
-                    {/* Voice-to-Text Button */}
-                    <button
-                      type="button"
-                      onClick={toggleListening}
-                      title="Voice-to-Text Transcription"
-                      className={`p-1.5 rounded-full transition-all cursor-pointer shrink-0 mr-1 ${
-                        isListening 
-                          ? 'text-violet-300 bg-violet-600/30 border border-violet-400/50 shadow-[0_0_15px_rgba(139,92,246,0.6)] animate-pulse scale-105' 
-                          : 'text-indigo-300/70 hover:text-white hover:bg-white/5'
-                      }`}
-                    >
-                      <Mic className={`w-4 h-4 ${isListening ? 'animate-bounce text-violet-300' : ''}`} />
-                    </button>
-                  </>
-                )}
-              </div>
-
-              {/* Record Voice Message toggle Button (visible when not recording) */}
-              {!isRecording && (
-                <button
-                  type="button"
-                  onClick={startVoiceRecording}
+                <input
+                  type="text"
+                  required
                   disabled={isLoading}
-                  title="Send Voice Message directly"
-                  className="w-9 h-9 rounded-full bg-transparent border border-white/5 hover:border-violet-500/50 flex items-center justify-center text-indigo-300 hover:text-violet-300 transition-all cursor-pointer shrink-0 hover:bg-[#150e4a]"
-                >
-                  <Volume2 className="w-4 h-4 text-violet-400" />
-                </button>
-              )}
-
-              {/* AI Voice Response Switch Toggle */}
-              {!isRecording && (
+                  readOnly={isListening}
+                  inputMode={isListening ? "none" : undefined}
+                  placeholder={isLoading ? "Nudge is working..." : (isListening ? "Listening... Speak now..." : "Message Nudge...")}
+                  value={inputText}
+                  onChange={e => setInputText(e.target.value)}
+                  onFocus={() => setIsInputFocused(true)}
+                  onBlur={() => setIsInputFocused(false)}
+                  className="bg-transparent border-none focus:outline-none focus:ring-0 text-sm px-4 flex-grow text-zinc-100 placeholder:text-zinc-500 min-w-0"
+                />
+                
+                {/* Voice-to-Text Button */}
                 <button
                   type="button"
-                  onClick={() => setAiVoiceEnabled(!aiVoiceEnabled)}
-                  title={aiVoiceEnabled ? "Mute AI Voice Responses" : "Enable AI Voice Responses"}
-                  className={`w-9 h-9 rounded-full border flex flex-col items-center justify-center transition-all cursor-pointer shrink-0 relative ${
-                    aiVoiceEnabled 
-                      ? 'bg-violet-600/20 border-violet-500/40 text-violet-300 shadow-[0_0_12px_rgba(139,92,246,0.25)] hover:bg-violet-600/30' 
-                      : 'bg-[#0f0b2a]/90 border-white/5 text-zinc-500 hover:text-zinc-400'
+                  onClick={toggleListening}
+                  title="Voice-to-Text Transcription"
+                  className={`p-2 rounded-full transition-all duration-300 cursor-pointer shrink-0 mr-1 ${
+                    isListening 
+                      ? 'bg-purple-600/20 border border-purple-400/60 shadow-[0_0_15px_rgba(168,85,247,0.5)] animate-pulse scale-110' 
+                      : 'text-indigo-300/70 hover:text-white hover:bg-purple-500/10 border border-transparent hover:border-purple-500/20'
                   }`}
                 >
-                  {aiVoiceEnabled ? (
-                    <Volume2 className="w-4 h-4 text-emerald-400 animate-pulse" />
-                  ) : (
-                    <VolumeX className="w-4 h-4" />
-                  )}
+                  <Mic className={`w-4 h-4 transition-all duration-300 ${isListening ? 'animate-bounce text-purple-400' : 'text-indigo-300/70'}`} />
                 </button>
-              )}
+              </div>
+
+              {/* AI Voice Response Switch Toggle */}
+              <button
+                type="button"
+                onClick={() => setAiVoiceEnabled(!aiVoiceEnabled)}
+                title={aiVoiceEnabled ? "Mute AI Voice Responses" : "Enable AI Voice Responses"}
+                className={`w-9 h-9 rounded-full border flex flex-col items-center justify-center transition-all cursor-pointer shrink-0 relative ${
+                  aiVoiceEnabled 
+                    ? 'bg-violet-600/20 border-violet-500/40 text-violet-300 shadow-[0_0_12px_rgba(139,92,246,0.25)] hover:bg-violet-600/30' 
+                    : 'bg-[#0f0b2a]/90 border-white/5 text-zinc-500 hover:text-zinc-400'
+                }`}
+              >
+                {aiVoiceEnabled ? (
+                  <Volume2 className="w-4 h-4 text-emerald-400 animate-pulse" />
+                ) : (
+                  <VolumeX className="w-4 h-4" />
+                )}
+              </button>
 
               {/* Main Text Send Button */}
-              {!isRecording && (
-                <button
-                  type="submit"
-                  disabled={isLoading || !inputText.trim()}
-                  className="btn-pill-lavender text-white w-9 h-9 rounded-full flex items-center justify-center hover:scale-105 transition-all cursor-pointer shrink-0 disabled:opacity-40 disabled:hover:scale-100"
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-              )}
+              <button
+                type="submit"
+                disabled={isLoading || !inputText.trim()}
+                className="btn-pill-lavender text-white w-9 h-9 rounded-full flex items-center justify-center hover:scale-105 transition-all cursor-pointer shrink-0 disabled:opacity-40 disabled:hover:scale-100"
+              >
+                <Send className="w-4 h-4" />
+              </button>
             </div>
           </form>
         )}
