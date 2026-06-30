@@ -162,6 +162,7 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
   const [inputText, setInputText] = useState('');
   const [isInputFocused, setIsInputFocused] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Voice Integration State variables
   const [isListening, setIsListening] = useState(false);
@@ -224,7 +225,13 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
 
   // Auto scroll
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (chatHistory.length === 0) {
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTop = 0;
+      }
+    } else {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [chatHistory, isLoading]);
 
   // Listen to structured roadmap panel mount & update events to scroll and anchor cleanly
@@ -1011,7 +1018,10 @@ export const NudgeChat: React.FC<NudgeChatProps> = ({
       </div>
 
       {/* Message List area */}
-      <div className={`flex-1 max-h-[calc(100vh-220px)] overflow-y-auto px-4 py-4 space-y-4 ${chatHistory.length === 0 ? 'flex flex-col justify-center' : ''}`}>
+      <div 
+        ref={scrollContainerRef}
+        className={`flex-1 max-h-[calc(100vh-220px)] overflow-y-auto px-4 py-4 space-y-4 ${chatHistory.length === 0 ? 'flex flex-col justify-center' : ''}`}
+      >
         {chatHistory.length === 0 ? (
           <div className="flex flex-col items-center justify-center max-w-md mx-auto my-auto text-center space-y-5 p-8 rounded-[24px] bg-neutral-950/40 backdrop-blur-md border border-white/5 shadow-2xl relative z-10">
             <div className="relative">

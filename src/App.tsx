@@ -8,7 +8,8 @@ import {
   initAuth, 
   googleSignIn, 
   logout, 
-  getAccessToken 
+  getAccessToken,
+  auth
 } from './lib/firebase-client';
 import { User } from 'firebase/auth';
 import { 
@@ -31,7 +32,8 @@ import {
   BellRing,
   AlertTriangle,
   CheckCircle2,
-  MessageSquare
+  MessageSquare,
+  Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -58,6 +60,7 @@ export default function App() {
 
   // Task Notifications State variables
   const [notifiedTaskIds, setNotifiedTaskIds] = useState<string[]>([]);
+  const [dismissedAlerts, setDismissedAlerts] = useState<string[]>([]);
   const [showNotificationDropdown, setShowNotificationDropdown] = useState(false);
   const [activeToasts, setActiveToasts] = useState<Array<{ id: string; title: string; message: string; taskId?: string }>>([]);
   const [isAlarmDismissed, setIsAlarmDismissed] = useState<boolean>(() => {
@@ -120,43 +123,181 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Check and restore demo mode if saved
-  useEffect(() => {
-    const wasDemo = localStorage.getItem('nudge_is_demo') === 'true';
-    if (wasDemo) {
-      let demoUid = localStorage.getItem('nudge_demo_user_id');
-      if (!demoUid) {
-        demoUid = `demo_judge_${Math.random().toString(36).substring(2, 11)}`;
+  const handleToggleDemoMode = async (enabled: boolean) => {
+    if (enabled) {
+      // 1. Wipe out chat message history arrays and state buffers
+      setNotifiedTaskIds([]);
+      setDismissedAlerts([]);
+      setActiveToasts([]);
+      setIsAlarmDismissed(false);
+      setIsBannerVisible(true);
+
+      // Completely purge sessionStorage and localStorage, then re-establish demo tracking keys
+      let demoUid = '';
+      const wasInitialized = typeof window !== 'undefined' && sessionStorage.getItem('demo_initialized') === 'true';
+
+      if (typeof window !== 'undefined') {
+        const storedUid = localStorage.getItem('nudge_demo_user_id');
+        demoUid = storedUid || `demo_judge_${Math.random().toString(36).substring(2, 11)}`;
+        
+        localStorage.clear();
+        sessionStorage.clear();
+        
+        localStorage.setItem('nudge_is_demo', 'true');
         localStorage.setItem('nudge_demo_user_id', demoUid);
+        if (wasInitialized) {
+          sessionStorage.setItem('demo_initialized', 'true');
+        }
+      } else {
+        demoUid = `demo_judge_${Math.random().toString(36).substring(2, 11)}`;
       }
-      setCurrentUser({
+
+      setIsDemoMode(true);
+      
+      const demoUser = {
         uid: demoUid,
         displayName: 'Hackathon Judge (Demo)',
         email: 'judge@hackathon.demo',
         photoURL: null
-      } as any);
+      } as any;
+      setCurrentUser(demoUser);
       setGoogleToken(null);
       setNeedsAuth(false);
-      setIsDemoMode(true);
+
+      if (!wasInitialized) {
+        // Instantly set client-side tasks with high-fidelity placeholder tasks designed for a perfect presentation
+        const demoTasks: Task[] = [
+          {
+            id: 'demo_task_submission_prep',
+            title: 'VIBE2SHIP Hackathon Submission Prep',
+            due_date: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+            priority: 'urgent',
+            category: 'presentation',
+            status: 'pending',
+            userId: demoUid,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          },
+          {
+            id: 'demo_task_review_slides',
+            title: 'Review Presentation Slides',
+            due_date: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+            priority: 'high',
+            category: 'design',
+            status: 'pending',
+            userId: demoUid,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          },
+          {
+            id: 'demo_task_pitch_practice',
+            title: 'Pitch Practice & Demo Flow Verification',
+            due_date: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
+            priority: 'high',
+            category: 'practice',
+            status: 'pending',
+            userId: demoUid,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }
+        ];
+        setTasks(demoTasks);
+
+        // Force-initialize the timeline state to match the clean setup (Initial Triage, Intense Deep Work Block, Structured Recovery, Integration/Review) with a fresh 15:00 active sprint timer.
+        const demoTimelineMessage: ChatMessage = {
+          id: 'demo_welcome_timeline_message',
+          role: 'model',
+          parts: [
+            {
+              text: "Welcome to Live Demo Mode! I've pre-configured your tactical Deep Work Action Timeline to help you execute today's hackathon presentation flawlessly. Let's tackle these micro-goals:\n\n" +
+                    "- Step 1: Initial Triage [15 mins]\n" +
+                    "- Step 2: Intense Deep Work Block [45 mins]\n" +
+                    "- Step 3: Structured Recovery [10 mins]\n" +
+                    "- Step 4: Integration/Review [30 mins]\n\n" +
+                    "Your workspace is prepared, and a fresh 15:00 active sprint timer is set for your first step."
+            }
+          ],
+          createdAt: new Date().toISOString()
+        };
+        setChatHistory([demoTimelineMessage]);
+
+        if (typeof window !== 'undefined') {
+          sessionStorage.setItem('demo_initialized', 'true');
+        }
+
+        // Call server reset API to persist these tasks in db for demoUid
+        try {
+          const response = await fetch('/api/demo/reset', {
+            method: 'POST',
+            headers: {
+              'x-user-id': demoUid
+            }
+          });
+          if (response.ok) {
+            const resData = await response.json();
+            if (resData.success && resData.tasks) {
+              setTasks(resData.tasks);
+            }
+          }
+        } catch (err) {
+          console.error("Failed to reset demo tasks on server:", err);
+        }
+      } else {
+        // Just fetch existing tasks
+        try {
+          const response = await fetch('/api/tasks', {
+            headers: {
+              'x-user-id': demoUid
+            }
+          });
+          if (response.ok) {
+            const data = await response.json();
+            setTasks(data);
+          }
+        } catch (err) {
+          console.error('Failed to fetch tasks:', err);
+        }
+      }
+    } else {
+      // 3. Switch OFF: Revert cleanly or restore standard authenticated account presets
+      localStorage.removeItem('nudge_is_demo');
+      setIsDemoMode(false);
+      
+      const firebaseUser = auth.currentUser;
+      if (firebaseUser) {
+        setCurrentUser(firebaseUser);
+        setNeedsAuth(false);
+        // Refresh tasks for real user
+        try {
+          const response = await fetch('/api/tasks', {
+            headers: {
+              'x-user-id': firebaseUser.uid
+            }
+          });
+          if (response.ok) {
+            const data = await response.json();
+            setTasks(data);
+          }
+        } catch (err) {
+          console.error('Failed to fetch tasks:', err);
+        }
+      } else {
+        // Keep the user firmly on the dashboard page without reloading or redirecting
+        setNeedsAuth(false);
+      }
+    }
+  };
+
+  // Check and restore demo mode if saved on initial mount
+  useEffect(() => {
+    const wasDemo = localStorage.getItem('nudge_is_demo') === 'true';
+    if (wasDemo) {
+      handleToggleDemoMode(true);
     }
   }, []);
 
   const handleStartDemoMode = () => {
-    let demoUid = localStorage.getItem('nudge_demo_user_id');
-    if (!demoUid) {
-      demoUid = `demo_judge_${Math.random().toString(36).substring(2, 11)}`;
-      localStorage.setItem('nudge_demo_user_id', demoUid);
-    }
-    localStorage.setItem('nudge_is_demo', 'true');
-    setIsDemoMode(true);
-    setCurrentUser({
-      uid: demoUid,
-      displayName: 'Hackathon Judge (Demo)',
-      email: 'judge@hackathon.demo',
-      photoURL: null
-    } as any);
-    setGoogleToken(null);
-    setNeedsAuth(false);
+    handleToggleDemoMode(true);
   };
 
   // Fetch Tasks once authenticated
@@ -167,6 +308,54 @@ export default function App() {
       setTasks([]);
     }
   }, [currentUser]);
+
+  // Ensure Demo Mode is populated with high-fidelity placeholder tasks if active tasks array is empty
+  useEffect(() => {
+    if (isDemoMode && tasks.length === 0 && currentUser) {
+      const isInitialized = typeof window !== 'undefined' && sessionStorage.getItem('demo_initialized') === 'true';
+      if (!isInitialized) {
+        const demoTasks: Task[] = [
+          {
+            id: 'demo_task_submission_prep',
+            title: 'VIBE2SHIP Hackathon Submission Prep',
+            due_date: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString(),
+            priority: 'urgent',
+            category: 'presentation',
+            status: 'pending',
+            userId: currentUser.uid,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          },
+          {
+            id: 'demo_task_review_slides',
+            title: 'Review Presentation Slides',
+            due_date: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+            priority: 'high',
+            category: 'design',
+            status: 'pending',
+            userId: currentUser.uid,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          },
+          {
+            id: 'demo_task_pitch_practice',
+            title: 'Pitch Practice & Demo Flow Verification',
+            due_date: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString(),
+            priority: 'high',
+            category: 'practice',
+            status: 'pending',
+            userId: currentUser.uid,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          }
+        ];
+        setTasks(demoTasks);
+        if (typeof window !== 'undefined') {
+          sessionStorage.setItem('demo_initialized', 'true');
+        }
+      }
+    }
+  }, [isDemoMode, tasks.length, currentUser]);
 
   const fetchTasks = async () => {
     if (!currentUser) return;
@@ -246,6 +435,9 @@ export default function App() {
 
   const handleUpdateTask = async (id: string, updates: Partial<Task>) => {
     if (!currentUser) return;
+    if (updates.status === 'completed') {
+      setDismissedAlerts(prev => [...prev, id]);
+    }
     try {
       const response = await fetch(`/api/tasks/${id}`, {
         method: 'PUT',
@@ -265,6 +457,7 @@ export default function App() {
 
   const handleDeleteTask = async (id: string) => {
     if (!currentUser) return;
+    setDismissedAlerts(prev => [...prev, id]);
     try {
       const response = await fetch(`/api/tasks/${id}`, {
         method: 'DELETE',
@@ -547,6 +740,7 @@ export default function App() {
 
     const criticals = tasks.filter(task => {
       if (task.status === 'completed') return false;
+      if (task.id && dismissedAlerts.includes(task.id)) return false;
       const dueTime = new Date(task.due_date).getTime();
       const now = Date.now();
       const hoursLeft = (dueTime - now) / (1000 * 60 * 60);
@@ -602,12 +796,13 @@ export default function App() {
         setChatHistory(prev => [...prev, alertMsg]);
       });
     }
-  }, [tasks, notifiedTaskIds]);
+  }, [tasks, notifiedTaskIds, dismissedAlerts]);
 
   // Proactive Alarms Helper: Find tasks due within 24 hours that are pending or in-progress
   const getProactiveAlarms = () => {
     return tasks.filter(task => {
       if (task.status === 'completed') return false;
+      if (task.id && dismissedAlerts.includes(task.id)) return false;
       const dueTime = new Date(task.due_date).getTime();
       const now = Date.now();
       const hoursLeft = (dueTime - now) / (1000 * 60 * 60);
@@ -646,6 +841,9 @@ export default function App() {
                 <div className="flex gap-2 mt-2.5">
                   <button
                     onClick={() => {
+                      if (toast.taskId) {
+                        setDismissedAlerts(prev => [...prev, toast.taskId!]);
+                      }
                       handleSendMessage(`Let's re-plan my day to focus on "${toast.title.replace('🚨 Urgent: ', '')}".`);
                       setActiveToasts(prev => prev.filter(t => t.id !== toast.id));
                     }}
@@ -654,7 +852,12 @@ export default function App() {
                     Reschedule Now
                   </button>
                   <button
-                    onClick={() => setActiveToasts(prev => prev.filter(t => t.id !== toast.id))}
+                    onClick={() => {
+                      if (toast.taskId) {
+                        setDismissedAlerts(prev => [...prev, toast.taskId!]);
+                      }
+                      setActiveToasts(prev => prev.filter(t => t.id !== toast.id));
+                    }}
                     className="text-[10px] bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white px-3 py-1 rounded-full transition-all cursor-pointer border border-[#251e4d]/40"
                   >
                     Dismiss
@@ -662,7 +865,12 @@ export default function App() {
                 </div>
               </div>
               <button
-                onClick={() => setActiveToasts(prev => prev.filter(t => t.id !== toast.id))}
+                onClick={() => {
+                  if (toast.taskId) {
+                    setDismissedAlerts(prev => [...prev, toast.taskId!]);
+                  }
+                  setActiveToasts(prev => prev.filter(t => t.id !== toast.id));
+                }}
                 className="absolute top-3 right-3 text-zinc-500 hover:text-white transition-all cursor-pointer"
               >
                 <X className="w-3.5 h-3.5" />
@@ -706,8 +914,8 @@ export default function App() {
                   : 'bg-[#0f0a2d]/30 text-indigo-300 border-[#251e4d]/40 hover:bg-[#150e3d]/50 hover:text-white'
               }`}
             >
-              <span className={`h-1.5 w-1.5 rounded-full ${tasks.filter(t => t.status !== 'completed').length > 0 ? 'bg-violet-400 animate-pulse shadow-[0_0_6px_rgba(167,139,250,0.8)]' : 'bg-zinc-500'}`} />
-              <span>{tasks.filter(t => t.status !== 'completed').length} Active</span>
+              <span className={`h-1.5 w-1.5 rounded-full ${tasks.filter(t => t.status !== 'completed' && (!t.id || !dismissedAlerts.includes(t.id))).length > 0 ? 'bg-violet-400 animate-pulse shadow-[0_0_6px_rgba(167,139,250,0.8)]' : 'bg-zinc-500'}`} />
+              <span>{tasks.filter(t => t.status !== 'completed' && (!t.id || !dismissedAlerts.includes(t.id))).length} Active</span>
             </button>
 
             {/* Proactive Notification Bell System */}
@@ -764,14 +972,29 @@ export default function App() {
                           const hrsLeft = Math.ceil((due.getTime() - Date.now()) / (1000 * 60 * 60));
                           return (
                             <div key={task.id} className="bg-violet-950/25 border border-violet-900/30 p-2.5 rounded-xl space-y-2 hover:border-violet-800/45 transition-all">
-                              <div className="flex items-start gap-2">
-                                <AlertTriangle className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0" />
-                                <div className="min-w-0 flex-1">
-                                  <div className="text-xs font-extrabold text-zinc-100 truncate" title={task.title}>{task.title}</div>
-                                  <div className="text-[10px] text-amber-300/80 font-semibold font-mono mt-0.5">
-                                    Due in {hrsLeft} hrs ({due.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})})
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-start gap-2 min-w-0 flex-1">
+                                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0" />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="text-xs font-extrabold text-zinc-100 truncate" title={task.title}>{task.title}</div>
+                                    <div className="text-[10px] text-amber-300/80 font-semibold font-mono mt-0.5">
+                                      Due in {hrsLeft} hrs ({due.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})})
+                                    </div>
                                   </div>
                                 </div>
+                                <button
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    if (task.id) {
+                                      setDismissedAlerts(prev => [...prev, task.id!]);
+                                      await handleDeleteTask(task.id);
+                                    }
+                                  }}
+                                  className="text-zinc-500 hover:text-rose-400 p-1 rounded hover:bg-rose-950/20 transition-all cursor-pointer flex items-center justify-center"
+                                  title="Delete Task"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
                               </div>
                               <div className="flex justify-end gap-1.5">
                                 <button
@@ -785,11 +1008,24 @@ export default function App() {
                                 </button>
                                 <button
                                   onClick={() => {
+                                    if (task.id) {
+                                      setDismissedAlerts(prev => [...prev, task.id!]);
+                                    }
                                     handleUpdateTask(task.id!, { status: 'completed' });
                                   }}
                                   className="text-[9px] bg-emerald-600/20 text-emerald-300 border border-emerald-500/20 hover:bg-emerald-600/30 px-2.5 py-1 rounded-md transition-all cursor-pointer"
                                 >
                                   Done
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    if (task.id) {
+                                      setDismissedAlerts(prev => [...prev, task.id!]);
+                                    }
+                                  }}
+                                  className="text-[9px] bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-[#251e4d]/40 px-2.5 py-1 rounded-md transition-all cursor-pointer"
+                                >
+                                  Dismiss
                                 </button>
                               </div>
                             </div>
@@ -1060,6 +1296,41 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* App Execution Mode Toggle */}
+                <div className="space-y-2">
+                  <label className="text-[10px] uppercase tracking-wider text-indigo-300/60 font-semibold font-mono block">
+                    App Execution Mode
+                  </label>
+                  <div className="bg-[#0f0a2d] border border-[#251e4d]/60 rounded-xl p-3 flex items-center justify-between gap-3 shadow-inner">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className={`w-4 h-4 transition-all duration-300 ${isDemoMode ? 'text-purple-400 animate-pulse' : 'text-indigo-300/40'}`} />
+                      <div>
+                        <div className="text-xs font-bold text-zinc-100">Live Demo Mode</div>
+                        <div className="text-[9px] text-indigo-300/50 leading-none mt-0.5">Isolated design sandbox</div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleToggleDemoMode(!isDemoMode);
+                      }}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none focus:outline-none ${
+                        isDemoMode ? 'bg-purple-600' : 'bg-[#1b1442]'
+                      }`}
+                      role="switch"
+                      aria-checked={isDemoMode}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                          isDemoMode ? 'translate-x-4' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
+
                 {/* Workspace Navigation */}
                 <div className="space-y-2">
                   <label className="text-[10px] uppercase tracking-wider text-indigo-300/60 font-semibold font-mono block">
@@ -1101,9 +1372,9 @@ export default function App() {
                         <TrendingUp className="w-4 h-4 text-violet-400 animate-pulse" />
                         <span>Analytics Hub</span>
                       </div>
-                      {tasks.filter(t => t.status !== 'completed').length > 0 && (
+                      {tasks.filter(t => t.status !== 'completed' && (!t.id || !dismissedAlerts.includes(t.id))).length > 0 && (
                         <span className="text-[9px] font-bold font-mono text-violet-300 bg-violet-600/15 border border-violet-500/30 px-1.5 py-0.5 rounded">
-                          {tasks.filter(t => t.status !== 'completed').length} Left
+                          {tasks.filter(t => t.status !== 'completed' && (!t.id || !dismissedAlerts.includes(t.id))).length} Left
                         </span>
                       )}
                     </button>
@@ -1312,6 +1583,41 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* App Execution Mode Toggle */}
+                <div className="space-y-2">
+                  <label className="text-[10px] uppercase tracking-wider text-indigo-300/60 font-semibold font-mono block">
+                    App Execution Mode
+                  </label>
+                  <div className="bg-[#0f0a2d] border border-[#251e4d]/60 rounded-xl p-3 flex items-center justify-between gap-3 shadow-inner">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className={`w-4 h-4 transition-all duration-300 ${isDemoMode ? 'text-purple-400 animate-pulse' : 'text-indigo-300/40'}`} />
+                      <div>
+                        <div className="text-xs font-bold text-zinc-100">Live Demo Mode</div>
+                        <div className="text-[9px] text-indigo-300/50 leading-none mt-0.5">Isolated design sandbox</div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleToggleDemoMode(!isDemoMode);
+                      }}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none focus:outline-none ${
+                        isDemoMode ? 'bg-purple-600' : 'bg-[#1b1442]'
+                      }`}
+                      role="switch"
+                      aria-checked={isDemoMode}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                          isDemoMode ? 'translate-x-4' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
+
                 {/* Workspace Navigation */}
                 <div className="space-y-2">
                   <label className="text-[10px] uppercase tracking-wider text-indigo-300/60 font-semibold font-mono block">
@@ -1359,9 +1665,9 @@ export default function App() {
                         <TrendingUp className="w-4 h-4 text-violet-400 animate-pulse" />
                         <span>Analytics Hub</span>
                       </div>
-                      {tasks.filter(t => t.status !== 'completed').length > 0 && (
+                      {tasks.filter(t => t.status !== 'completed' && (!t.id || !dismissedAlerts.includes(t.id))).length > 0 && (
                         <span className="text-[9px] font-bold font-mono text-violet-300 bg-violet-600/15 border border-violet-500/30 px-1.5 py-0.5 rounded">
-                          {tasks.filter(t => t.status !== 'completed').length} Left
+                          {tasks.filter(t => t.status !== 'completed' && (!t.id || !dismissedAlerts.includes(t.id))).length} Left
                         </span>
                       )}
                     </button>
